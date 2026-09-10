@@ -73,14 +73,13 @@ second choice can tell.
 
 with `ROUTER_LIVE=1` and `ROUTER_LIVE_MODEL` set to a model one of your hosts
 holds takes one request through all three: refused, fallback, resident. It skips
-and names the hosts that were missing if none is running
-([transcript](../research/route58/MEASURED.txt)).
+and names the hosts that were missing if none is running.
 
 ## Who may ask
 
 The interface is a named pipe on Windows and an `AF_UNIX` socket elsewhere, and
 every caller is bound to a process the kernel vouches for
-([`abstraction-identity`](../identity/CONTRACT.md)). The frame is read before
+([`abstraction-identity`](https://github.com/openabstractions/abstraction-identity/blob/main/CONTRACT.md)). The frame is read before
 the caller is known — Windows will not identify the client of a pipe nothing has
 been read from — and it stays bytes until the binding succeeds. A caller that
 cannot be bound is refused before its frame is parsed as anything.
@@ -93,7 +92,7 @@ it and a loopback socket names no program.
 
 ## Names
 
-Resolution is [`abstraction-model`](../model/README.md)'s, not ours. Four hosts
+Resolution is [`abstraction-model`](https://github.com/openabstractions/abstraction-model)'s, not ours. Four hosts
 name one model four ways with no overlap — Lemonade's `id` and its `checkpoint`,
 LM Studio's `id`, Ollama's `name:tag`, ComfyUI's bare filenames — and every one
 of them is reported under the family it belongs to.

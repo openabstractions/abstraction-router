@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	router "github.com/openabstractions/service-router/go"
+	router "github.com/openabstractions/abstraction-router/go"
 )
 
 func main() {

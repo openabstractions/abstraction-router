@@ -12,9 +12,8 @@ import (
 
 // Every runtime on this machine reports GPU memory per process and so calls the
 // GPU empty while another process holds 22 GB of it; three instruments gave
-// three answers at one instant and two of them were wrong by tens of gigabytes
-// (research/onehost/MEASURED.txt §2). These counters are the only instrument
-// here that sees the whole device.
+// three answers at one instant and two of them were wrong by tens of gigabytes.
+// These counters are the only instrument here that sees the whole device.
 var (
 	pdh         = syscall.NewLazyDLL("pdh.dll")
 	openQuery   = pdh.NewProc("PdhOpenQueryW")

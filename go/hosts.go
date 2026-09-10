@@ -13,7 +13,7 @@ import (
 // A Host is a model runtime this machine already has. The router reads it and
 // never writes to it: it does not load, unload, evict or hold weights, because
 // a host holding three models loses all three to one failed load where three
-// hosts lose one (research/onehost/MEASURED.txt §1).
+// hosts lose one.
 type Host struct {
 	Name      string
 	Base      string

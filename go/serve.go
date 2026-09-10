@@ -12,9 +12,8 @@ import (
 // See asks.Serve for why the body left a main. The CLI `router` has not moved.
 //
 // This one must stay in the user's session whatever hosts it: the per-process
-// GPU counters it reports are unreadable from session 0
-// (VISION.md 2026-09-05 "A residency service must run in an interactive
-// session"), so there is no admin registration of it to offer.
+// GPU counters it reports are unreadable from session 0, so there is no admin
+// registration of it to offer.
 func Serve(args []string) error {
 	fs := flag.NewFlagSet("router", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", DefaultEndpoint(), "pipe or socket callers connect to")

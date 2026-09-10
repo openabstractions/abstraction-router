@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	router "github.com/openabstractions/service-router/go"
+	router "github.com/openabstractions/abstraction-router/go"
 )
 
 const usage = `router models              what models exist here, under every name
