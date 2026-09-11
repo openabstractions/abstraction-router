@@ -23,7 +23,13 @@ func TestClientRefusalCompatibility(t *testing.T) {
 		{"known", `{"code":"` + CodeUnknownOperation + `","error":"human reason"}`, CodeUnknownOperation, "human reason"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			at := filepath.Join(t.TempDir(), "service.sock")
+			// Test names can exceed Darwin's Unix socket path limit.
+			dir, err := os.MkdirTemp("", "oa-rt-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			at := filepath.Join(dir, "s")
 			if runtime.GOOS == "windows" {
 				at = listen.Endpoint(fmt.Sprintf("router-codes-%d-%d", os.Getpid(), time.Now().UnixNano()))
 			}
