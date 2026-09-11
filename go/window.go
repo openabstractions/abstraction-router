@@ -31,9 +31,9 @@ func Window(addr string, r *Router) (net.Listener, error) {
 			Fresh: req.URL.Query().Has("fresh")}, Unidentified)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasPrefix(out.Error, "refused:"):
+		case out.Code == CodeCallerRefused:
 			w.WriteHeader(http.StatusForbidden)
-		case out.Error != "":
+		case out.Err() != nil:
 			w.WriteHeader(http.StatusBadRequest)
 		}
 		json.NewEncoder(w).Encode(out)

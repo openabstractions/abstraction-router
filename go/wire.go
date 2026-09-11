@@ -35,6 +35,7 @@ type Request struct {
 }
 
 type Response struct {
+	Code     string      `json:"code,omitempty"`
 	Error    string      `json:"error,omitempty"`
 	Caller   listen.Seen `json:"caller"`
 	TookMS   int64       `json:"took_ms"`

@@ -113,3 +113,16 @@ of them is reported under the family it belongs to.
 - **Two builds of one family on one host** — llama.cpp, an MTP variant, an NPU
   recipe — are one family and several files. A build the host already holds
   wins; otherwise the host's own order decides.
+
+## Refusals
+
+Your application can tell why a request was refused without depending on the
+wording of its error message. A newer server's unfamiliar refusal still counts
+as a failure.
+
+Service refusals carry an optional stable `code` alongside the existing diagnostic
+`error` text. Either nonempty field means refusal. Old text-only replies remain
+valid; unknown codes remain refusals and must not be treated as success. Servers
+continue sending diagnostic text for older clients. Go clients return
+`*RemoteError`, retaining the code and message; `Response.Err()` applies the same
+rule to a decoded reply. The [code constants](go/errors.go) define the vocabulary. Diagnostic wording is not an API.

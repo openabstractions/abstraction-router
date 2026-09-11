@@ -34,8 +34,8 @@ func (c *Client) Ask(req Request) (Response, error) {
 	if err := json.Unmarshal(sc.Bytes(), &out); err != nil {
 		return Response{}, err
 	}
-	if out.Error != "" {
-		return out, errors.New(out.Error)
+	if err := out.Err(); err != nil {
+		return out, err
 	}
 	return out, nil
 }

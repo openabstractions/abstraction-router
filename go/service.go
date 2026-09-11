@@ -69,18 +69,18 @@ func (s *Service) serve(c listen.Conn) {
 	b, err := c.Bind()
 	seen := listen.SeenBy(b, err)
 	if err != nil {
-		reply(c, Response{Caller: seen, Error: "refused: " + seen.String()})
+		reply(c, Response{Code: CodeCallerRefused, Caller: seen, Error: "refused: " + seen.String()})
 		return
 	}
 	defer b.Close()
 	if err := b.Check(Bound); err != nil {
-		reply(c, Response{Caller: seen, Error: "refused: " + err.Error()})
+		reply(c, Response{Code: CodeCallerRefused, Caller: seen, Error: "refused: " + err.Error()})
 		return
 	}
 
 	var req Request
 	if err := json.Unmarshal(frame, &req); err != nil {
-		reply(c, Response{Caller: seen, Error: "not a request: " + err.Error()})
+		reply(c, Response{Code: CodeInvalidRequest, Caller: seen, Error: "not a request: " + err.Error()})
 		return
 	}
 	reply(c, s.r.Answer(req, seen))
@@ -116,6 +116,7 @@ func (r *Router) Answer(req Request, caller listen.Seen) Response {
 		return took(at)
 	case OpRoute:
 		if !caller.Bound {
+			out.Code = CodeCallerRefused
 			out.Error = "refused: a routing decision is attributed to the program that asked for it, and " + caller.Why
 			return took(time.Now())
 		}
@@ -125,6 +126,7 @@ func (r *Router) Answer(req Request, caller listen.Seen) Response {
 			Model: req.Model, Family: d.Family, Verdict: d.Verdict, Host: d.Host})
 		return took(at)
 	}
+	out.Code = CodeUnknownOperation
 	out.Error = fmt.Sprintf("unknown op %q; this service answers %q, %q and %q and nothing else",
 		req.Op, OpModels, OpResidency, OpRoute)
 	return took(time.Now())
