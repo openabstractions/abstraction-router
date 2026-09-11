@@ -15,13 +15,56 @@ host saved 0.30 GB of 42.87 and turned one failed load from a 33% loss into a
 100% one, while *not loading the same model twice* saved 22.52 GB with every
 host left where it was. The saving is routing, so this is a router.
 
+## Framed service clients (development)
+
+The new Go and C++ clients expose `Models`, `Hosts` and `Pick` through generated
+[Thrift bindings](router.thrift) and the shared IPC runtime. They contain no
+model-host discovery implementation, local store or fallback provider.
+
+Start the separate framed host from a locally built executable:
+
+```sh
+openabstractions serve router-v1
+```
+
+`ABSTRACTION_ROUTER_ENDPOINT` overrides its endpoint for clients and host; the
+host also accepts `--endpoint`. The default is the shared `router-v1` endpoint
+convention, distinct from the legacy `router` endpoint. This foreground command
+does not register an OS service. The provider remains in the user's session.
+
+```go
+import router "github.com/openabstractions/abstraction-router/go/client"
+
+client := router.Discover()
+models, err := client.Models(false)
+// Handle err before using models. Discovery does not start a provider.
+result, err := client.Pick(router.PickRequest{Model: "qwen2.5:0.5b"})
+```
+
+For C++17, install the development CMake packages and use
+`find_package(abstraction_router CONFIG REQUIRED)` with
+`abstraction::router_client`. See [the C++ example](cpp/README.md).
+
+`Pick` preserves the existing verdict strings. A routing refusal such as
+`unauthorised` is a decision, not a transport failure. An absent `allowed`
+structure permits every servable host; a present structure with `hosts: []`
+permits none. Responses preserve that distinction. Caller attribution is
+observed by the host through identity; requests contain no caller claims.
+
+This subset includes model aliases, host residency, failed-host diagnostics,
+cache timing and the routing audit. **GPU-cost fields and the read-only HTTP
+window remain legacy surfaces.** The old `router` host/CLI continues to use its
+original endpoint. This is not a claim of full router conformance, all-platform
+validation or a published release. The new service reuses the existing provider
+and therefore still never loads or unloads a model.
+
 ## Install
 
     go build -o bin/ ./router/go/cmd/routerd ./router/go/cmd/router
 
 Nothing is installed, no service is registered, and the binaries are unsigned.
 
-## Run it
+## Legacy CLI
 
     routerd                                  # listens on a pipe, no port
     router models
@@ -126,3 +169,8 @@ valid; unknown codes remain refusals and must not be treated as success. Servers
 continue sending diagnostic text for older clients. Go clients return
 `*RemoteError`, retaining the code and message; `Response.Err()` applies the same
 rule to a decoded reply. The [code constants](go/errors.go) define the vocabulary. Diagnostic wording is not an API.
+
+Caller `user_description` and `path_description` contain server-observed diagnostic
+text, including proof decorations. They are not stable principal identifiers,
+filesystem paths, or authorization evidence. The audit entries likewise contain
+diagnostic caller descriptions.
