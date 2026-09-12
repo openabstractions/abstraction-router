@@ -2,6 +2,7 @@
 #include <abstraction/router/rec.h>
 #include <abstraction/ipc/frame.hpp>
 #include <cstdlib>
+#include <optional>
 
 namespace abstraction::router {
 
@@ -26,22 +27,30 @@ inline std::string default_endpoint() {
 class Client {
 public:
     explicit Client(std::string endpoint = default_endpoint()) : endpoint_(std::move(endpoint)) {}
+    // Explicit operation scope; copies retain the same absolute deadline.
+    Client(std::string endpoint, ipc::Deadline deadline)
+        : endpoint_(std::move(endpoint)), deadline_(deadline) {}
+
     ModelsSnapshot Models(bool fresh = false) const {
-        ipc::FrameTransport transport(endpoint_, 10000, 1 << 20);
+        auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
+                                   : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
         RouterClient<ipc::FrameTransport> client(transport);
         return client.Models(fresh);
     }
     HostsSnapshot Hosts(bool fresh = false) const {
-        ipc::FrameTransport transport(endpoint_, 10000, 1 << 20);
+        auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
+                                   : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
         RouterClient<ipc::FrameTransport> client(transport);
         return client.Hosts(fresh);
     }
     PickResult Pick(const PickRequest& request) const {
-        ipc::FrameTransport transport(endpoint_, 10000, 1 << 20);
+        auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
+                                   : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
         RouterClient<ipc::FrameTransport> client(transport);
         return client.Pick(request);
     }
 private:
     std::string endpoint_;
+    std::optional<ipc::Deadline> deadline_;
 };
 }
