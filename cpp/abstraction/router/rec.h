@@ -2210,6 +2210,7 @@ auto response=transport_.ExchangeFrame(frame);auto payload=service_response(resp
 return result.value;
 }
 };
+struct RouterService{inline static constexpr std::string_view wire_name="abstraction.router/router@1";inline static constexpr std::string_view capability="abstraction.router";template<class Transport>using Client=RouterClient<Transport>;};
 struct RouterDispatcher:FrameWriter,FrameExchanger{Router&handler;explicit RouterDispatcher(Router&h):handler(h){}
 void WriteFrame(std::string_view frame)override{auto v=service_payload(frame);if(v.service!="abstraction.router/router@1")throw DispatchError("unknown_service");
 if(v.method=="Models"){
