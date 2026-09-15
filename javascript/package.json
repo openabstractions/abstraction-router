@@ -1,0 +1,23 @@
+{
+  "name": "@openabstractions/router",
+  "version": "0.0.0",
+  "description": "Generated JavaScript client and codecs for model host inventory and routing decisions.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openabstractions/abstraction-router.git",
+    "directory": "javascript"
+  },
+  "homepage": "https://github.com/openabstractions/abstraction-router#readme",
+  "bugs": {
+    "url": "https://github.com/openabstractions/abstraction-router/issues"
+  },
+  "type": "module",
+  "exports": "./js/abstraction/router/rec.mjs",
+  "files": [
+    "js"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

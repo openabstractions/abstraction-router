@@ -15,13 +15,56 @@ import (
 )
 
 type Host struct {
-	listener listen.Listener
-	router   *router.Router
-	ctx      context.Context
-	cancel   context.CancelFunc
-	once     sync.Once
-	workers  sync.WaitGroup
-	OnError  func(error)
+	listener  listen.Listener
+	router    *router.Router
+	ctx       context.Context
+	cancel    context.CancelFunc
+	once      sync.Once
+	workers   sync.WaitGroup
+	lifecycle sync.Mutex
+	serving   bool
+	policy    Policy
+	OnError   func(error)
+	// OnStopped is called when admission stops. Assign it before Serve.
+	OnStopped func()
+}
+
+// Router refusal codes for an explicit receiving policy.
+const (
+	CodeForbidden         = "forbidden"
+	CodePolicyUnavailable = "policy_unavailable"
+)
+
+// Actions a Policy receives, and the resource each names.
+const (
+	// ActionInventory covers Models and Hosts; its resource is ResourceInventory.
+	ActionInventory   = "abstraction.router/inventory.read"
+	ResourceInventory = "abstraction.router/inventory"
+	// ActionRoute covers Pick; its resource is the requested model.
+	ActionRoute = "abstraction.router/route"
+)
+
+// Policy authorizes one router operation for the rechecked bound caller. It
+// must honor ctx and be safe for concurrent calls. Wrap ErrPolicyUnavailable
+// when the decision cannot be obtained; every other error is a refusal.
+type Policy func(ctx context.Context, peer *identity.Peer, action, resource string) error
+
+// ErrPolicyUnavailable distinguishes a failed decision lookup from refusal.
+var ErrPolicyUnavailable = errors.New("router service: policy unavailable")
+
+// EnablePolicy narrows every operation to callers the policy authorizes.
+// Configure it before Serve. Without it bound callers keep access.
+func (h *Host) EnablePolicy(policy Policy) error {
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
+	if h.serving || h.ctx.Err() != nil {
+		return errors.New("router service: configure policy before Serve")
+	}
+	if policy == nil {
+		return errors.New("router service: explicit policy required")
+	}
+	h.policy = policy
+	return nil
 }
 
 func Listen(endpoint string, provider *router.Router) (*Host, error) {
@@ -44,9 +87,23 @@ func (h *Host) Close() error {
 	return err
 }
 func (h *Host) Serve(ctx context.Context) error {
+	h.lifecycle.Lock()
+	if h.serving {
+		h.lifecycle.Unlock()
+		return errors.New("router service: host already served")
+	}
+	h.serving = true
+	policy := h.policy
+	h.lifecycle.Unlock()
 	stop := context.AfterFunc(ctx, func() { _ = h.Close() })
 	defer stop()
 	defer h.workers.Wait()
+	defer func() {
+		if h.OnStopped != nil {
+			h.OnStopped()
+		}
+	}()
+	defer h.Close()
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
@@ -66,7 +123,7 @@ func (h *Host) Serve(ctx context.Context) error {
 				defer call.Close()
 			}
 			if err == nil {
-				dispatch := wire.RouterDispatcher{Handler: &receiver{provider: h.router, call: call}}
+				dispatch := wire.RouterDispatcher{Handler: &receiver{provider: h.router, call: call, policy: policy, ctx: requestCtx}}
 				var response []byte
 				response, err = dispatch.ExchangeFrame(call.Frame)
 				if err == nil {
@@ -83,6 +140,32 @@ func (h *Host) Serve(ctx context.Context) error {
 type receiver struct {
 	provider *router.Router
 	call     *listen.FramedCall
+	policy   Policy
+	ctx      context.Context
+}
+
+// authorize applies the configured policy to one operation after the caller
+// binding is rechecked and before the provider is asked.
+func (r *receiver) authorize(action, resource string) error {
+	if r.policy == nil {
+		return nil
+	}
+	ctx := r.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	peer, err := r.call.Peer()
+	if err != nil {
+		return &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller identity could not be rechecked"}
+	}
+	err = r.policy(ctx, peer, action, resource)
+	if err == nil && ctx.Err() == nil {
+		return nil
+	}
+	if ctx.Err() != nil || errors.Is(err, ErrPolicyUnavailable) {
+		return &wire.ServiceError{Code: CodePolicyUnavailable, Message: "router policy decision unavailable"}
+	}
+	return &wire.ServiceError{Code: CodeForbidden, Message: "router operation not permitted"}
 }
 
 func (r *receiver) answer(request router.Request) (router.Response, error) {
@@ -91,6 +174,13 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 	}
 	if err := r.call.Recheck(); err != nil {
 		return router.Response{}, &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller binding no longer valid"}
+	}
+	action, resource := ActionInventory, ResourceInventory
+	if request.Op == router.OpRoute {
+		action, resource = ActionRoute, request.Model
+	}
+	if err := r.authorize(action, resource); err != nil {
+		return router.Response{}, err
 	}
 	// Caller is created by ReceiveFramed after checking router.Bound, never decoded.
 	out := r.provider.Answer(request, r.call.Caller)

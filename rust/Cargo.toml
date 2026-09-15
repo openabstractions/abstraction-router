@@ -1,0 +1,10 @@
+[package]
+name = "abstraction-router-api"
+version = "0.0.0"
+edition = "2021"
+description = "Generated OpenAbstractions router Rust service protocol"
+[lib]
+path = "../rs/abstraction/router/rec.rs"
+
+[dependencies]
+abstraction-frame = { path = "../../abstraction-identity/rust-frame" }

@@ -1,6 +1,6 @@
-github.com/openabstractions/abstraction-identity v0.2.1-0.20260913090829-6916ad75b439 h1:9PqB++JMmCtBi5B02yJzvei4lTMbmYPp11/nn7AJMD0=
-github.com/openabstractions/abstraction-identity v0.2.1-0.20260913090829-6916ad75b439/go.mod h1:gv5sDQuTQqv/UY+fXY5Q74i1junNIEvf/5UsZxMxwKY=
-github.com/openabstractions/abstraction-model/go v0.3.1-0.20260913091047-7c807a66e986 h1:2nYLUhfZC+vnd7Zvs8c6ZzbevCk8eXmX6I9Vo/DH/XA=
-github.com/openabstractions/abstraction-model/go v0.3.1-0.20260913091047-7c807a66e986/go.mod h1:EGmHV3cRZI3AxRd1/Xk38/KsSWybYdo9ZKKBghJ5FWo=
+github.com/openabstractions/abstraction-identity v0.2.2 h1:x8mcco2z0ca//vmsNxFEl+p4UQBWYLVb2GSJsBsg82M=
+github.com/openabstractions/abstraction-identity v0.2.2/go.mod h1:gv5sDQuTQqv/UY+fXY5Q74i1junNIEvf/5UsZxMxwKY=
+github.com/openabstractions/abstraction-model/go v0.3.1 h1:YLiDBQ5REQKKYKQqWQVhMnolX69GwCNxZoBT4rGdQUQ=
+github.com/openabstractions/abstraction-model/go v0.3.1/go.mod h1:EyCP8ROoivl/q7h6Q2DTZqFEmuZaG4q7PWVzIrnRzH4=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
