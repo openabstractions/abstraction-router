@@ -14,7 +14,9 @@
 package router
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -27,15 +29,36 @@ type snapshot struct {
 	hosts    []HostState
 	families []Family
 	pick     map[string]map[string]string
+	// profiles holds, per host and model name, the profiles the host's own
+	// metadata reports; a name absent here is judged by its host's profiles.
+	profiles map[string]map[string][]string
 	gpu      []Holder
 	gpuWhy   string
 }
 
 type Router struct {
-	hosts []*Host
-	mu    sync.Mutex
-	snap  snapshot
-	asked []Ask
+	hostsMu sync.Mutex
+	hosts   []*Host
+	mu      sync.Mutex
+	snap    snapshot
+	asked   []Ask
+	apply   Applier
+}
+
+// Hosts are the hosts this router reads, in preference order.
+func (r *Router) Hosts() []*Host {
+	r.hostsMu.Lock()
+	defer r.hostsMu.Unlock()
+	return append([]*Host(nil), r.hosts...)
+}
+
+// SetHosts replaces the hosts this router reads, for a service whose host
+// configuration changed while it runs. The last survey's inventory stays
+// readable until the next Survey, and Route considers only the new hosts.
+func (r *Router) SetHosts(hosts ...*Host) {
+	r.hostsMu.Lock()
+	defer r.hostsMu.Unlock()
+	r.hosts = append([]*Host(nil), hosts...)
 }
 
 func New(hosts ...*Host) *Router { return &Router{hosts: hosts} }
@@ -47,14 +70,37 @@ func (r *Router) Survey() {
 		state     HostState
 		installed []string
 		resident  []string
+		profiles  map[string][]string
+		// domain holds the hosts a remote runtime reports.
+		domain []HostState
 	}
-	reads := make([]read, len(r.hosts))
+	hosts := r.Hosts()
+	reads := make([]read, len(hosts))
 	var wg sync.WaitGroup
-	for i, h := range r.hosts {
+	for i, h := range hosts {
 		wg.Add(1)
 		go func(i int, h *Host) {
 			defer wg.Done()
-			s := HostState{Host: h.Name, Base: h.Base, Servable: h.Servable()}
+			s := HostState{Host: h.Name, Base: h.Base, Servable: h.Servable(), Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy,
+				Profiles: h.HostProfiles(), Domain: h.Domain}
+			if h.Hosted {
+				installed, why := r.readHosted(h)
+				if why != "" {
+					s.Why = why
+					reads[i] = read{state: s}
+					return
+				}
+				s.Up, s.Installed = true, len(installed)
+				reads[i] = read{state: s, installed: installed}
+				if h.remote != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					defer cancel()
+					if domain, err := h.remoteHosts(ctx); err == nil {
+						reads[i].domain = domain
+					}
+				}
+				return
+			}
 			installed, err := h.installed(h)
 			if err != nil {
 				s.Why = err.Error()
@@ -68,14 +114,22 @@ func (r *Router) Survey() {
 				return
 			}
 			s.Up, s.Installed, s.Resident = true, len(installed), resident
-			reads[i] = read{state: s, installed: installed, resident: resident}
+			var profiles map[string][]string
+			if h.modelProfiles != nil {
+				profiles = h.modelProfiles(h, append(slices.Clone(installed), resident...))
+			}
+			reads[i] = read{state: s, installed: installed, resident: resident, profiles: profiles}
 		}(i, h)
 	}
 	wg.Wait()
 
 	byFamily := map[string]map[string]*Alias{}
 	pick := map[string]map[string]string{}
-	for i, h := range r.hosts {
+	profiles := map[string]map[string][]string{}
+	for i, h := range hosts {
+		if reads[i].profiles != nil {
+			profiles[h.Name] = reads[i].profiles
+		}
 		note := func(name string, resident bool) {
 			fam := identity.Family(name)
 			if fam == "" {
@@ -89,7 +143,7 @@ func (r *Router) Survey() {
 			if a, seen := names[name]; seen {
 				a.Resident = a.Resident || resident
 			} else {
-				names[name] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable()}
+				names[name] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable(), Hosted: h.Hosted, Profiles: reads[i].profiles[name]}
 			}
 			if pick[fam] == nil {
 				pick[fam] = map[string]string{}
@@ -126,14 +180,15 @@ func (r *Router) Survey() {
 	if err != nil {
 		why = err.Error()
 	}
-	states := make([]HostState, len(reads))
+	states := make([]HostState, 0, len(reads))
 	for i := range reads {
-		states[i] = reads[i].state
+		states = append(states, reads[i].state)
+		states = append(states, reads[i].domain...)
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.snap = snapshot{at: time.Now(), hosts: states, families: families, pick: pick, gpu: gpu, gpuWhy: why}
+	r.snap = snapshot{at: time.Now(), hosts: states, families: families, pick: pick, profiles: profiles, gpu: gpu, gpuWhy: why}
 }
 
 func (r *Router) latest(fresh bool) snapshot {
@@ -232,14 +287,25 @@ func (r *Router) Route(req Request) (*Decision, time.Time) {
 		}
 	}
 	d.InstalledOn = installedOn
+	profile := req.Profile
+	if profile == "" {
+		profile = ProfileChat
+	}
+	if !r.anyServes(s, profile) {
+		d.Verdict, d.Why = NoHost, "no host serves the "+profile+" profile"
+		return d, s.at
+	}
 
-	for _, c := range r.candidates(s, fam) {
+	for _, c := range r.candidates(s, fam, profile) {
 		if !d.permits(c.host.Name) {
 			d.Withheld = append(d.Withheld, c.host.Name)
 			continue
 		}
 		d.Host, d.Model, d.Endpoint = c.host.Name, c.name, c.host.Endpoint()
-		if c.held {
+		if c.host.Hosted {
+			d.Verdict, d.Loads = Hosted, 0
+			d.Why = "no permitted host on this machine has it; " + c.host.Name + " is a hosted host, and the service performs the call"
+		} else if c.held {
 			d.Verdict, d.Loads = Resident, 0
 			d.Why = c.host.Name + " already holds it; routing anywhere else loads a second copy"
 		} else {
@@ -253,6 +319,13 @@ func (r *Router) Route(req Request) (*Decision, time.Time) {
 		d.Why = fmt.Sprintf("%v can serve it and the request authorised %v; the router does not go outside what it was given",
 			d.Withheld, *d.Authorised)
 		return d, s.at
+	}
+	for _, h := range r.Hosts() {
+		if h.Servable() && has(installedOn, h.Name) {
+			d.Verdict = NoHost
+			d.Why = fmt.Sprintf("%v has it, and no host serves it for the %s profile", installedOn, profile)
+			return d, s.at
+		}
 	}
 	if len(installedOn) > 0 {
 		d.Verdict = Unservable
@@ -274,28 +347,94 @@ type candidate struct {
 }
 
 // candidates is every host that could serve the family, best first: each host
-// that already holds it, then each host that has it on disk. A host that holds
-// it beats one that would load it however the request orders them, because a
-// second copy of a model already in memory is the waste this exists to stop.
-func (r *Router) candidates(s snapshot, fam string) []candidate {
+// that already holds it, then each host that has it on disk, then each hosted
+// host that lists it. A host that holds it beats one that would load it however
+// the request orders them, because a second copy of a model already in memory
+// is the waste this exists to stop; a hosted host comes last, because it spends.
+// Only names the host serves for profile count.
+func (r *Router) candidates(s snapshot, fam, profile string) []candidate {
 	var out []candidate
-	for _, h := range r.hosts {
-		if !h.Servable() {
+	hosts := r.Hosts()
+	serving := func(h *Host, names []string) []string {
+		var kept []string
+		for _, name := range names {
+			if s.serves(h, name, profile) {
+				kept = append(kept, name)
+			}
+		}
+		return kept
+	}
+	for _, h := range hosts {
+		if !h.Servable() || h.Hosted {
 			continue
 		}
-		if names := residentOf(s, fam, h.Name); len(names) > 0 {
+		if names := serving(h, residentOf(s, fam, h.Name)); len(names) > 0 {
 			out = append(out, candidate{host: h, name: names[0], held: true})
 		}
 	}
-	for _, h := range r.hosts {
-		if !h.Servable() || len(residentOf(s, fam, h.Name)) > 0 {
+	for _, h := range hosts {
+		if !h.Servable() || h.Hosted || len(serving(h, residentOf(s, fam, h.Name))) > 0 {
 			continue
 		}
-		if name, ok := s.pick[fam][h.Name]; ok {
+		if name, ok := s.pickServing(fam, h, profile); ok {
+			out = append(out, candidate{host: h, name: name})
+		}
+	}
+	for _, h := range hosts {
+		if !h.Servable() || !h.Hosted {
+			continue
+		}
+		if name, ok := s.pickServing(fam, h, profile); ok {
 			out = append(out, candidate{host: h, name: name})
 		}
 	}
 	return out
+}
+
+// pickServing is the host's own choice of name for the family when it serves
+// profile, or else the first of its names for the family that does.
+func (s snapshot) pickServing(fam string, h *Host, profile string) (string, bool) {
+	if name, ok := s.pick[fam][h.Name]; ok && s.serves(h, name, profile) {
+		return name, true
+	}
+	for _, f := range s.families {
+		if f.Family != fam {
+			continue
+		}
+		for _, a := range f.Names {
+			if a.Host == h.Name && s.serves(h, a.Name, profile) {
+				return a.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// anyServes reports whether a servable host serves profile: for a host whose
+// models report their own profiles, one of those models; for another host,
+// its own profiles. A router with no servable host answers true, and its
+// decisions keep reading not-here.
+func (r *Router) anyServes(s snapshot, profile string) bool {
+	servable := false
+	for _, h := range r.Hosts() {
+		if !h.Servable() {
+			continue
+		}
+		servable = true
+		models, reported := s.profiles[h.Name]
+		if !reported || len(models) == 0 {
+			if has(h.HostProfiles(), profile) {
+				return true
+			}
+			continue
+		}
+		for _, p := range models {
+			if has(p, profile) {
+				return true
+			}
+		}
+	}
+	return !servable
 }
 
 func residentOf(s snapshot, fam, host string) []string {

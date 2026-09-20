@@ -9,7 +9,7 @@ import (
 
 func TestUnboundNeverReachesProvider(t *testing.T) {
 	r := receiver{provider: router.New()}
-	_, err := r.Pick(wire.PickRequest{Model: "qwen2.5:0.5b"})
+	_, err := r.views().Pick(wire.PickRequest{Model: "qwen2.5:0.5b"})
 	var refused *wire.ServiceError
 	if !errors.As(err, &refused) || refused.Code != router.CodeCallerRefused {
 		t.Fatal(err)

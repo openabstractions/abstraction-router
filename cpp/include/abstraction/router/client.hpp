@@ -31,29 +31,29 @@ public:
     Client(std::string endpoint, ipc::Deadline deadline)
         : endpoint_(std::move(endpoint)), deadline_(deadline) {}
 
-    ModelsSnapshot Models(bool fresh = false) const {
+    ModelsSnapshot models(bool fresh = false) const {
         auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
                                    : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
-        transport = transport.WithCancellation(cancellation_).WithServerExpectation(server_);
+        transport = transport.with_cancellation(cancellation_).with_server_expectation(server_);
         RouterClient<ipc::FrameTransport> client(transport);
-        return client.Models(fresh);
+        return client.models(fresh);
     }
-    HostsSnapshot Hosts(bool fresh = false) const {
+    HostsSnapshot hosts(bool fresh = false) const {
         auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
                                    : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
-        transport = transport.WithCancellation(cancellation_).WithServerExpectation(server_);
+        transport = transport.with_cancellation(cancellation_).with_server_expectation(server_);
         RouterClient<ipc::FrameTransport> client(transport);
-        return client.Hosts(fresh);
+        return client.hosts(fresh);
     }
-    PickResult Pick(const PickRequest& request) const {
+    PickResult pick(const PickRequest& request) const {
         auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
                                    : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
-        transport = transport.WithCancellation(cancellation_).WithServerExpectation(server_);
+        transport = transport.with_cancellation(cancellation_).with_server_expectation(server_);
         RouterClient<ipc::FrameTransport> client(transport);
-        return client.Pick(request);
+        return client.pick(request);
     }
-    Client WithServerExpectation(std::optional<ipc::ServerExpectation> server) const {auto copy=*this;copy.server_=std::move(server);return copy;}
- Client WithCancellation(ipc::CancellationToken token) const {
+    Client with_server_expectation(std::optional<ipc::ServerExpectation> server) const {auto copy=*this;copy.server_=std::move(server);return copy;}
+ Client with_cancellation(ipc::CancellationToken token) const {
         auto scoped = *this;
         scoped.cancellation_ = std::move(token);
         return scoped;

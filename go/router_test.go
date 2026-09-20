@@ -76,8 +76,8 @@ func TestWouldLoadNamesTheHostAndLoadsNothing(t *testing.T) {
 
 func TestGraphWeightsAreRefusedRatherThanRouted(t *testing.T) {
 	d, _ := machine(t).Route(Request{Model: modelid.Family("wan2.2_ti2v_5B_fp16.safetensors")})
-	if d.Verdict != Unservable {
-		t.Fatalf("a diffusion model was routed to an OpenAI endpoint: %+v", d)
+	if d.Verdict != NoHost {
+		t.Fatalf("a diffusion model was offered to the chat profile: %+v", d)
 	}
 }
 

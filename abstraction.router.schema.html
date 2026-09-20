@@ -9,10 +9,30 @@
 <nav class="site"><a class="name" href="index.html">Open Abstractions</a>
 <a href="index.html">Overview</a> <a href="cases.html">Cases</a> <a href="reference.html">Reference</a> <a href="evidence.html">Evidence</a> <a href="coverage.html">Coverage</a> <a href="adopt.html">Adopt</a>
 <a class="right" href="https://github.com/openabstractions">github.com/openabstractions</a></nav>
-<p class="meta" style="margin-top:10px"><a href="#encoding">Encoding</a> · <a href="#types">Types</a> · <a href="#structs">Structs</a> · <a href="#enums">Enumerations</a> · <a href="#constants">Constants</a> · <a href="#vocabulary">Vocabulary</a> · <a href="#refusals">Refusals</a> · <a href="#protocol">Protocol</a></p>
+
 
 <h1>Schema</h1>
-<p class="lead">One definition; this page and every encoder are emitted from it. Nothing below is written by hand, and each rule tag links the construct to the profile that admits it.</p>
+<p class="lead">Use this reference to inspect fields, methods, accepted values and failure outcomes. For setup and working examples, start with the <a href="reference.html">API guide</a>.</p>
+<p>Definition: <code>abstraction.router</code></p>
+<nav aria-label="Schema sections" class="meta"><a href="#service-Router">Router</a> · <a href="#types">Types</a> · <a href="#structs">Fields</a> · <a href="#constants">Constants</a> · <a href="#encoding">Encoding</a> · <a href="#refusals">Refusals</a></nav>
+<h2 id="service-Router">Service <code>Router</code> <span class="tag">[DEF-S1]</span></h2>
+<p>Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router.</p>
+<p>Wire identity: <code>abstraction.router/router@1</code></p>
+<p>Handler error codes, declared by <code>router_error_codes</code>: <code>internal</code>, <code>invalid_request</code>, <code>caller_refused</code>, <code>unknown_operation</code>, <code>policy_unavailable</code>, <code>forbidden</code>. Generated bindings name each as a ServiceErrorCode member beside the dispatcher's own codes.</p>
+<p>Frames carry version, service, method and typed arguments. Transport owns framing, associated exchanges, deadlines and connections. Unknown version/service/method and malformed arguments are rejected before invoking a handler. One-way WriteFrame success means local submission, not remote acceptance or persistence.</p>
+<p>Request-response methods use ExchangeFrame. Replies carry version, service, method, ok and payload; success payload contains typed value (or an empty object for void). Error payload contains nonempty code and message, which may be empty. ServiceError preserves unknown codes. Unexpected handler failures become handler_error without private details; invalid results become invalid_result. Clients validate reply identity and result before exposing it. A malformed frame or transport failure remains a local error; the transport must associate each response with its exchange. C++ dispatchers are pure protocol bindings, not listening servers.</p>
+<p>Read model families and aliases. Fresh requests survey the existing hosts.</p>
+<h3><code>Models</code></h3><p><code>request-response</code> <code>ModelsSnapshot</code></p><ul>
+<li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
+</ul>
+<p>Read host residency, duplicate families and routing audit. GPU cost is outside this subset.</p>
+<h3><code>Hosts</code></h3><p><code>request-response</code> <code>HostsSnapshot</code></p><ul>
+<li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
+</ul>
+<p>Choose a permitted host without loading any model. Missing allowance permits all hosts; an explicit empty allowance permits none. Attribution comes from the bound caller.</p>
+<h3><code>Pick</code></h3><p><code>request-response</code> <code>PickResult</code></p><ul>
+<li>Argument 1: <code>PickRequest</code> <code>request</code> (required, including zero/false/empty)</li>
+</ul>
 <h2 id="encoding">Encoding <span class="tag">[DEF-E1]</span></h2>
 <div class="wrap"><table>
 <thead><tr><th>setting</th><th>value</th><th>rule</th></tr></thead>
@@ -59,6 +79,7 @@
 <tr><td>1</td><td><code>model</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
 <tr><td>2</td><td><code>fresh</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
 <tr><td>3</td><td><code>allowed</code></td><td><code>HostAllowance</code></td><td>optional · omitted when absent</td><td>—</td></tr>
+<tr><td>4</td><td><code>profile</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Caller"><code>Caller</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -86,6 +107,8 @@
 <tr><td>2</td><td><code>name</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
 <tr><td>3</td><td><code>resident</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
 <tr><td>4</td><td><code>servable</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
+<tr><td>5</td><td><code>hosted</code></td><td><code>bool</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>6</td><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Family"><code>Family</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -115,6 +138,12 @@
 <tr><td>5</td><td><code>installed</code></td><td><code>i64</code></td><td>required</td><td>—</td></tr>
 <tr><td>6</td><td><code>resident</code></td><td><code>list&lt;string&gt;</code></td><td>required</td><td>—</td></tr>
 <tr><td>7</td><td><code>servable</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
+<tr><td>8</td><td><code>hosted</code></td><td><code>bool</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>9</td><td><code>wire</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>10</td><td><code>credential</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>11</td><td><code>declared_by</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>12</td><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>13</td><td><code>domain</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Ask"><code>Ask</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -168,7 +197,11 @@
 <div class="wrap"><table>
 <thead><tr><th>name</th><th>type</th><th>value</th></tr></thead>
 <tbody>
-<tr><td><code>verdicts</code></td><td><code>list&lt;string&gt;</code></td><td><code>resident, would-load, unservable, not-here, unparseable, unauthorised</code></td></tr>
+<tr><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td><code>chat, embed, transcription, speech, image</code></td></tr>
+<tr><td><code>verdicts</code></td><td><code>list&lt;string&gt;</code></td><td><code>resident, would-load, hosted, unservable, not-here, unparseable, unauthorised, no-host</code></td></tr>
+<tr><td><code>wire_kinds</code></td><td><code>list&lt;string&gt;</code></td><td><code>openai-compatible, anthropic-messages, deepgram-prerecorded, elevenlabs-stream, stability-v2beta, fal-queue, replicate-predictions, openai-realtime, oa-remote@1</code></td></tr>
+<tr><td><code>credential_consumers</code></td><td><code>list&lt;string&gt;</code></td><td><code>abstraction.router/router@1</code></td></tr>
+<tr><td><code>router_error_codes</code></td><td><code>list&lt;string&gt;</code></td><td><code>internal, invalid_request, caller_refused, unknown_operation, policy_unavailable, forbidden</code></td></tr>
 </tbody></table></div>
 <h2 id="refusals">Refusal words <span class="tag">[DEF-R1]</span></h2>
 <div class="wrap"><table>
@@ -186,23 +219,6 @@
 <tr><td>10</td><td><code>missing_field</code></td><td><code>structure</code></td></tr>
 <tr><td>11</td><td><code>trailing_bytes</code></td><td><code>document</code></td></tr>
 </tbody></table></div>
-<h2 id="service-Router">Service <code>Router</code> <span class="tag">[DEF-S1]</span></h2>
-<p>Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router.</p>
-<p>Wire identity: <code>abstraction.router/router@1</code></p>
-<p>Frames carry version, service, method and typed arguments. Transport owns framing, associated exchanges, deadlines and connections. Unknown version/service/method and malformed arguments are rejected before invoking a handler. One-way WriteFrame success means local submission, not remote acceptance or persistence.</p>
-<p>Request-response methods use ExchangeFrame. Replies carry version, service, method, ok and payload; success payload contains typed value (or an empty object for void). Error payload contains nonempty code and message, which may be empty. ServiceError preserves unknown codes. Unexpected handler failures become handler_error without private details; invalid results become invalid_result. Clients validate reply identity and result before exposing it. A malformed frame or transport failure remains a local error; the transport must associate each response with its exchange. C++ dispatchers are pure protocol bindings, not listening servers.</p>
-<p>Read model families and aliases. Fresh requests survey the existing hosts.</p>
-<h3><code>Models</code></h3><p><code>request-response</code> <code>ModelsSnapshot</code></p><ul>
-<li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
-</ul>
-<p>Read host residency, duplicate families and routing audit. GPU cost is outside this subset.</p>
-<h3><code>Hosts</code></h3><p><code>request-response</code> <code>HostsSnapshot</code></p><ul>
-<li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
-</ul>
-<p>Choose a permitted host without loading any model. Missing allowance permits all hosts; an explicit empty allowance permits none. Attribution comes from the bound caller.</p>
-<h3><code>Pick</code></h3><p><code>request-response</code> <code>PickResult</code></p><ul>
-<li>Argument 1: <code>PickRequest</code> <code>request</code> (required, including zero/false/empty)</li>
-</ul>
 
 <footer>
 <p><a href="index.html">Overview</a> · <a href="cases.html">Cases</a> · <a href="reference.html">Reference</a> · <a href="evidence.html">Evidence</a> · <a href="coverage.html">Coverage</a> · <a href="adopt.html">Adopt</a> ·

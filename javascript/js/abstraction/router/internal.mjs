@@ -4,7 +4,7 @@ const HEX = "0123456789abcdef";
 const ENC = new TextEncoder();
 const SHORT = { 0x22: '\\"', 0x5c: "\\\\", 0x08: "\\b", 0x0c: "\\f", 0x0a: "\\n", 0x0d: "\\r", 0x09: "\\t" };
 
-export class Out {
+class Out {
   constructor() { this.b = []; }
   byte(c) { this.b.push(c); }
   ascii(s) { for (let i = 0; i < s.length; i++) this.b.push(s.charCodeAt(i)); }
@@ -20,11 +20,11 @@ function escByte(out, c) {
 
 // Every integer the definition calls i64 is a BigInt here, because Number
 // rounds above 2^53 and two values in the conformance record are i64 extremes.
-export function num(out, n) { out.ascii(BigInt(n).toString()); }
+function num(out, n) { out.ascii(BigInt(n).toString()); }
 
-export function pad(out, depth) { for (let i = 0; i < depth * 2; i++) out.byte(0x20); }
+function pad(out, depth) { for (let i = 0; i < depth * 2; i++) out.byte(0x20); }
 
-export function strs(out, v, depth) {
+function strs(out, v, depth) {
   if (v.length === 0) { out.ascii("[]"); return; }
   out.ascii("[\n");
   for (let i = 0; i < v.length; i++) {
@@ -39,7 +39,7 @@ export function strs(out, v, depth) {
 
 const isWs = (c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d;
 
-export function raw(out, s, depth) {
+function raw(out, s, depth) {
   const b = typeof s === "string" ? ENC.encode(s) : s;
   let i = 0;
   while (i < b.length) {
@@ -91,7 +91,7 @@ function byteLess(a, b) {
   return x.length - y.length;
 }
 
-export function rawmap(out, m, depth) {
+function rawmap(out, m, depth) {
   const keys = Object.keys(m).sort(byteLess);
   if (keys.length === 0) { out.ascii("{}"); return; }
   out.ascii("{\n");
@@ -107,13 +107,13 @@ export function rawmap(out, m, depth) {
   out.byte(0x7d);
 }
 
-export function esc(out, s) {
+function esc(out, s) {
   out.byte(0x22);
   for (const c of ENC.encode(s)) escByte(out, c);
   out.byte(0x22);
 }
 
-export function encList(out, v, depth, enc) {
+function writeList(out, v, depth, enc) {
   if (v.length === 0) { out.ascii("[]"); return; }
   out.ascii("[\n");
   for (let i = 0; i < v.length; i++) {
@@ -126,9 +126,32 @@ export function encList(out, v, depth, enc) {
   out.byte(0x5d);
 }
 
-export const verdicts = ["resident", "would-load", "unservable", "not-here", "unparseable", "unauthorised"];
+export const ServiceErrorCode = Object.freeze({
+  HandlerError: "handler_error",
+  InvalidResult: "invalid_result",
+  UnknownVersion: "unknown_version",
+  UnknownService: "unknown_service",
+  UnknownMethod: "unknown_method",
+  WrongMode: "wrong_mode",
+  Internal: "internal",
+  InvalidRequest: "invalid_request",
+  CallerRefused: "caller_refused",
+  UnknownOperation: "unknown_operation",
+  PolicyUnavailable: "policy_unavailable",
+  Forbidden: "forbidden",
+});
 
-export function enc_hostallowance(out, v, depth) {
+export const profiles = ["chat", "embed", "transcription", "speech", "image"];
+
+export const verdicts = ["resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"];
+
+export const wireKinds = ["openai-compatible", "anthropic-messages", "deepgram-prerecorded", "elevenlabs-stream", "stability-v2beta", "fal-queue", "replicate-predictions", "openai-realtime", "oa-remote@1"];
+
+export const credentialConsumers = ["abstraction.router/router@1"];
+
+export const routerErrorCodes = ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"];
+
+function writeHostAllowance(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -140,7 +163,7 @@ export function enc_hostallowance(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_pickrequest(out, v, depth) {
+function writePickRequest(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -159,56 +182,64 @@ export function enc_pickrequest(out, v, depth) {
     pad(out, depth + 1);
     esc(out, "allowed");
     out.ascii(": ");
-    enc_hostallowance(out, v.allowed, depth + 1);
+    writeHostAllowance(out, v.allowed, depth + 1);
+  }
+  if (v.profile !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "profile");
+    out.ascii(": ");
+    esc(out, v.profile);
   }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_caller(out, v, depth) {
+function writeCaller(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "user_description");
   out.ascii(": ");
-  esc(out, v.user_description);
+  esc(out, v.userDescription);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "path_description");
   out.ascii(": ");
-  esc(out, v.path_description);
+  esc(out, v.pathDescription);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_observation(out, v, depth) {
+function writeObservation(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "caller");
   out.ascii(": ");
-  enc_caller(out, v.caller, depth + 1);
+  writeCaller(out, v.caller, depth + 1);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "took_ms");
   out.ascii(": ");
-  num(out, v.took_ms);
+  num(out, v.tookMs);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "cache_age_ms");
   out.ascii(": ");
-  num(out, v.cache_age_ms);
+  num(out, v.cacheAgeMs);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_alias(out, v, depth) {
+function writeAlias(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -233,12 +264,28 @@ export function enc_alias(out, v, depth) {
   esc(out, "servable");
   out.ascii(": ");
   out.ascii(v.servable ? "true" : "false");
+  if (v.hosted) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "hosted");
+    out.ascii(": ");
+    out.ascii(v.hosted ? "true" : "false");
+  }
+  if (v.profiles.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "profiles");
+    out.ascii(": ");
+    strs(out, v.profiles, depth + 1);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_family(out, v, depth) {
+function writeFamily(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -250,31 +297,31 @@ export function enc_family(out, v, depth) {
   pad(out, depth + 1);
   esc(out, "names");
   out.ascii(": ");
-  encList(out, v.names, depth + 1, enc_alias);
+  writeList(out, v.names, depth + 1, writeAlias);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_modelssnapshot(out, v, depth) {
+function writeModelsSnapshot(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "observation");
   out.ascii(": ");
-  enc_observation(out, v.observation, depth + 1);
+  writeObservation(out, v.observation, depth + 1);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "models");
   out.ascii(": ");
-  encList(out, v.models, depth + 1, enc_family);
+  writeList(out, v.models, depth + 1, writeFamily);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_hoststate(out, v, depth) {
+function writeHostState(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -317,12 +364,60 @@ export function enc_hoststate(out, v, depth) {
   esc(out, "servable");
   out.ascii(": ");
   out.ascii(v.servable ? "true" : "false");
+  if (v.hosted) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "hosted");
+    out.ascii(": ");
+    out.ascii(v.hosted ? "true" : "false");
+  }
+  if (v.wire !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "wire");
+    out.ascii(": ");
+    esc(out, v.wire);
+  }
+  if (v.credential !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "credential");
+    out.ascii(": ");
+    esc(out, v.credential);
+  }
+  if (v.declaredBy !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "declared_by");
+    out.ascii(": ");
+    esc(out, v.declaredBy);
+  }
+  if (v.profiles.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "profiles");
+    out.ascii(": ");
+    strs(out, v.profiles, depth + 1);
+  }
+  if (v.domain !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "domain");
+    out.ascii(": ");
+    esc(out, v.domain);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_ask(out, v, depth) {
+function writeAsk(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -370,19 +465,19 @@ export function enc_ask(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_hostssnapshot(out, v, depth) {
+function writeHostsSnapshot(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "observation");
   out.ascii(": ");
-  enc_observation(out, v.observation, depth + 1);
+  writeObservation(out, v.observation, depth + 1);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "hosts");
   out.ascii(": ");
-  encList(out, v.hosts, depth + 1, enc_hoststate);
+  writeList(out, v.hosts, depth + 1, writeHostState);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -394,13 +489,13 @@ export function enc_hostssnapshot(out, v, depth) {
   pad(out, depth + 1);
   esc(out, "asked");
   out.ascii(": ");
-  encList(out, v.asked, depth + 1, enc_ask);
+  writeList(out, v.asked, depth + 1, writeAsk);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_decision(out, v, depth) {
+function writeDecision(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -442,14 +537,14 @@ export function enc_decision(out, v, depth) {
   pad(out, depth + 1);
   esc(out, "installed_on");
   out.ascii(": ");
-  strs(out, v.installed_on, depth + 1);
+  strs(out, v.installedOn, depth + 1);
   if (v.authorised !== undefined && v.authorised !== null) {
     out.byte(0x2c);
     out.byte(0x0a);
     pad(out, depth + 1);
     esc(out, "authorised");
     out.ascii(": ");
-    enc_hostallowance(out, v.authorised, depth + 1);
+    writeHostAllowance(out, v.authorised, depth + 1);
   }
   out.byte(0x2c);
   out.byte(0x0a);
@@ -474,25 +569,25 @@ export function enc_decision(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_pickresult(out, v, depth) {
+function writePickResult(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "observation");
   out.ascii(": ");
-  enc_observation(out, v.observation, depth + 1);
+  writeObservation(out, v.observation, depth + 1);
   out.byte(0x2c);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "decision");
   out.ascii(": ");
-  enc_decision(out, v.decision, depth + 1);
+  writeDecision(out, v.decision, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_oaroutermodelsarguments(out, v, depth) {
+function writeOARouterModelsArguments(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -504,7 +599,7 @@ export function enc_oaroutermodelsarguments(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_oarouterhostsarguments(out, v, depth) {
+function writeOARouterHostsArguments(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -516,19 +611,19 @@ export function enc_oarouterhostsarguments(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_oarouterpickarguments(out, v, depth) {
+function writeOARouterPickArguments(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "request");
   out.ascii(": ");
-  enc_pickrequest(out, v.request, depth + 1);
+  writePickRequest(out, v.request, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_oaserviceframe(out, v, depth) {
+function writeOAServiceFrame(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -558,7 +653,7 @@ export function enc_oaserviceframe(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_oaservicereply(out, v, depth) {
+function writeOAServiceReply(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -594,7 +689,7 @@ export function enc_oaservicereply(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_oaserviceerror(out, v, depth) {
+function writeOAServiceError(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -612,37 +707,37 @@ export function enc_oaserviceerror(out, v, depth) {
   out.byte(0x7d);
 }
 
-export function enc_oaroutermodelsresult(out, v, depth) {
+function writeOARouterModelsResult(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "value");
   out.ascii(": ");
-  enc_modelssnapshot(out, v.value, depth + 1);
+  writeModelsSnapshot(out, v.value, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_oarouterhostsresult(out, v, depth) {
+function writeOARouterHostsResult(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "value");
   out.ascii(": ");
-  enc_hostssnapshot(out, v.value, depth + 1);
+  writeHostsSnapshot(out, v.value, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
 }
 
-export function enc_oarouterpickresult(out, v, depth) {
+function writeOARouterPickResult(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
   esc(out, "value");
   out.ascii(": ");
-  enc_pickresult(out, v.value, depth + 1);
+  writePickResult(out, v.value, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -650,7 +745,7 @@ export function enc_oarouterpickresult(out, v, depth) {
 
 export function encode(v) {
   const out = new Out();
-  enc_pickrequest(out, v, 0);
+  writePickRequest(out, v, 0);
   out.byte(0x0a);
   return out.bytes();
 }
@@ -931,7 +1026,7 @@ class Reader {
   }
 }
 
-function decodeList(r, elem) {
+function readList(r, elem) {
   if (r.at() !== 0x5b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1031,20 +1126,26 @@ export function newHostAllowance() {
   return { hosts: [] };
 }
 
+// profile is what the chosen host must serve the model for, a profiles member
+// or <owner>/<name>@<n>; empty is chat.
 export function newPickRequest() {
-  return { model: "", fresh: false, allowed: null };
+  return { model: "", fresh: false, allowed: null, profile: "" };
 }
 
 export function newCaller() {
-  return { user_description: "", path_description: "" };
+  return { userDescription: "", pathDescription: "" };
 }
 
 export function newObservation() {
-  return { caller: newCaller(), took_ms: 0n, cache_age_ms: 0n };
+  return { caller: newCaller(), tookMs: 0n, cacheAgeMs: 0n };
 }
 
+// hosted is true for a name read from a hosted host's model listing; such a
+// name is never resident. profiles are what the host's own model metadata says
+// this name serves (LM Studio's type, Ollama's capabilities); empty when the
+// host reports none, and then its HostState profiles apply.
 export function newAlias() {
-  return { host: "", name: "", resident: false, servable: false };
+  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [] };
 }
 
 export function newFamily() {
@@ -1055,8 +1156,23 @@ export function newModelsSnapshot() {
   return { observation: newObservation(), models: [] };
 }
 
+// domain names the remote runtime a host belongs to: an oa-remote@1 host lists
+// itself, and each host that runtime reports, named <remote>/<host>, with
+// domain <remote>. The remote runtime's names, states and credential names are
+// its own; its credentials stay on it. profiles are what the host serves: those
+// its registration declares, or its wire's default (every seeded profile for a
+// host on this machine and openai-compatible, chat for another wire).
+// declared_by names what registered the host: operator for a person's
+// configuration, the product's name (ollama, lmstudio, docker-model-runner,
+// foundry-local) for a host that product's own record declared, or default for
+// a built-in address; it is omitted when unknown. A hosted host is a provider
+// endpoint reached over the network by its wire kind, one of wire_kinds or
+// <owner>/<name>@<n>. credential names the abstraction.credentials entry the
+// service applies to its listing and requests; the snapshot carries the name
+// and never a header value. A listing the applier refuses reads up false with
+// why credential:<outcome>:<name>. A host on this machine omits all three.
 export function newHostState() {
-  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false };
+  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false, hosted: false, wire: "", credential: "", declaredBy: "", profiles: [], domain: "" };
 }
 
 export function newAsk() {
@@ -1068,50 +1184,50 @@ export function newHostsSnapshot() {
 }
 
 export function newDecision() {
-  return { asked: "", family: "", verdict: "", host: "", model: "", endpoint: "", installed_on: [], authorised: null, withheld: [], loads: 0n, why: "" };
+  return { asked: "", family: "", verdict: "", host: "", model: "", endpoint: "", installedOn: [], authorised: null, withheld: [], loads: 0n, why: "" };
 }
 
 export function newPickResult() {
   return { observation: newObservation(), decision: newDecision() };
 }
 
-export function newOARouterModelsArguments() {
+function newOARouterModelsArguments() {
   return { fresh: false };
 }
 
-export function newOARouterHostsArguments() {
+function newOARouterHostsArguments() {
   return { fresh: false };
 }
 
-export function newOARouterPickArguments() {
+function newOARouterPickArguments() {
   return { request: newPickRequest() };
 }
 
-export function newOAServiceFrame() {
+function newOAServiceFrame() {
   return { version: 0, service: "", method: "", arguments: "" };
 }
 
-export function newOAServiceReply() {
+function newOAServiceReply() {
   return { version: 0, service: "", method: "", ok: false, payload: "" };
 }
 
-export function newOAServiceError() {
+function newOAServiceError() {
   return { code: "", message: "" };
 }
 
-export function newOARouterModelsResult() {
+function newOARouterModelsResult() {
   return { value: newModelsSnapshot() };
 }
 
-export function newOARouterHostsResult() {
+function newOARouterHostsResult() {
   return { value: newHostsSnapshot() };
 }
 
-export function newOARouterPickResult() {
+function newOARouterPickResult() {
   return { value: newPickResult() };
 }
 
-function decode_hostallowance(r) {
+function readHostAllowance(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1146,7 +1262,7 @@ function decode_hostallowance(r) {
   return v;
 }
 
-function decode_pickrequest(r) {
+function readPickRequest(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1173,7 +1289,11 @@ function decode_pickrequest(r) {
       } else if (key === "allowed") {
         if (seen & 4) throw r.refuse("duplicate_field");
         seen |= 4;
-        v.allowed = decode_hostallowance(r);
+        v.allowed = readHostAllowance(r);
+      } else if (key === "profile") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.profile = r.string();
       } else {
         throw r.refuse("unknown_field");
       }
@@ -1189,7 +1309,7 @@ function decode_pickrequest(r) {
   return v;
 }
 
-function decode_caller(r) {
+function readCaller(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1208,11 +1328,11 @@ function decode_caller(r) {
       if (key === "user_description") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.user_description = r.string();
+        v.userDescription = r.string();
       } else if (key === "path_description") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.path_description = r.string();
+        v.pathDescription = r.string();
       } else {
         r.skipValue();
       }
@@ -1228,7 +1348,7 @@ function decode_caller(r) {
   return v;
 }
 
-function decode_observation(r) {
+function readObservation(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1247,15 +1367,15 @@ function decode_observation(r) {
       if (key === "caller") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.caller = decode_caller(r);
+        v.caller = readCaller(r);
       } else if (key === "took_ms") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.took_ms = r.integer(-9223372036854775808n, 9223372036854775807n);
+        v.tookMs = r.integer(-9223372036854775808n, 9223372036854775807n);
       } else if (key === "cache_age_ms") {
         if (seen & 4) throw r.refuse("duplicate_field");
         seen |= 4;
-        v.cache_age_ms = r.integer(-9223372036854775808n, 9223372036854775807n);
+        v.cacheAgeMs = r.integer(-9223372036854775808n, 9223372036854775807n);
       } else {
         r.skipValue();
       }
@@ -1271,7 +1391,7 @@ function decode_observation(r) {
   return v;
 }
 
-function decode_alias(r) {
+function readAlias(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1303,6 +1423,14 @@ function decode_alias(r) {
         if (seen & 8) throw r.refuse("duplicate_field");
         seen |= 8;
         v.servable = r.boolean();
+      } else if (key === "hosted") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.hosted = r.boolean();
+      } else if (key === "profiles") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.profiles = r.strList();
       } else {
         r.skipValue();
       }
@@ -1318,7 +1446,7 @@ function decode_alias(r) {
   return v;
 }
 
-function decode_family(r) {
+function readFamily(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1341,7 +1469,7 @@ function decode_family(r) {
       } else if (key === "names") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.names = decodeList(r, decode_alias);
+        v.names = readList(r, readAlias);
       } else {
         r.skipValue();
       }
@@ -1357,7 +1485,7 @@ function decode_family(r) {
   return v;
 }
 
-function decode_modelssnapshot(r) {
+function readModelsSnapshot(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1376,11 +1504,11 @@ function decode_modelssnapshot(r) {
       if (key === "observation") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.observation = decode_observation(r);
+        v.observation = readObservation(r);
       } else if (key === "models") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.models = decodeList(r, decode_family);
+        v.models = readList(r, readFamily);
       } else {
         r.skipValue();
       }
@@ -1396,7 +1524,7 @@ function decode_modelssnapshot(r) {
   return v;
 }
 
-function decode_hoststate(r) {
+function readHostState(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1440,6 +1568,30 @@ function decode_hoststate(r) {
         if (seen & 64) throw r.refuse("duplicate_field");
         seen |= 64;
         v.servable = r.boolean();
+      } else if (key === "hosted") {
+        if (seen & 128) throw r.refuse("duplicate_field");
+        seen |= 128;
+        v.hosted = r.boolean();
+      } else if (key === "wire") {
+        if (seen & 256) throw r.refuse("duplicate_field");
+        seen |= 256;
+        v.wire = r.string();
+      } else if (key === "credential") {
+        if (seen & 512) throw r.refuse("duplicate_field");
+        seen |= 512;
+        v.credential = r.string();
+      } else if (key === "declared_by") {
+        if (seen & 1024) throw r.refuse("duplicate_field");
+        seen |= 1024;
+        v.declaredBy = r.string();
+      } else if (key === "profiles") {
+        if (seen & 2048) throw r.refuse("duplicate_field");
+        seen |= 2048;
+        v.profiles = r.strList();
+      } else if (key === "domain") {
+        if (seen & 4096) throw r.refuse("duplicate_field");
+        seen |= 4096;
+        v.domain = r.string();
       } else {
         r.skipValue();
       }
@@ -1455,7 +1607,7 @@ function decode_hoststate(r) {
   return v;
 }
 
-function decode_ask(r) {
+function readAsk(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1514,7 +1666,7 @@ function decode_ask(r) {
   return v;
 }
 
-function decode_hostssnapshot(r) {
+function readHostsSnapshot(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1533,11 +1685,11 @@ function decode_hostssnapshot(r) {
       if (key === "observation") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.observation = decode_observation(r);
+        v.observation = readObservation(r);
       } else if (key === "hosts") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.hosts = decodeList(r, decode_hoststate);
+        v.hosts = readList(r, readHostState);
       } else if (key === "doubled") {
         if (seen & 4) throw r.refuse("duplicate_field");
         seen |= 4;
@@ -1545,7 +1697,7 @@ function decode_hostssnapshot(r) {
       } else if (key === "asked") {
         if (seen & 8) throw r.refuse("duplicate_field");
         seen |= 8;
-        v.asked = decodeList(r, decode_ask);
+        v.asked = readList(r, readAsk);
       } else {
         r.skipValue();
       }
@@ -1561,7 +1713,7 @@ function decode_hostssnapshot(r) {
   return v;
 }
 
-function decode_decision(r) {
+function readDecision(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1604,11 +1756,11 @@ function decode_decision(r) {
       } else if (key === "installed_on") {
         if (seen & 64) throw r.refuse("duplicate_field");
         seen |= 64;
-        v.installed_on = r.strList();
+        v.installedOn = r.strList();
       } else if (key === "authorised") {
         if (seen & 128) throw r.refuse("duplicate_field");
         seen |= 128;
-        v.authorised = decode_hostallowance(r);
+        v.authorised = readHostAllowance(r);
       } else if (key === "withheld") {
         if (seen & 256) throw r.refuse("duplicate_field");
         seen |= 256;
@@ -1636,7 +1788,7 @@ function decode_decision(r) {
   return v;
 }
 
-function decode_pickresult(r) {
+function readPickResult(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1655,11 +1807,11 @@ function decode_pickresult(r) {
       if (key === "observation") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.observation = decode_observation(r);
+        v.observation = readObservation(r);
       } else if (key === "decision") {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
-        v.decision = decode_decision(r);
+        v.decision = readDecision(r);
       } else {
         r.skipValue();
       }
@@ -1675,7 +1827,7 @@ function decode_pickresult(r) {
   return v;
 }
 
-function decode_oaroutermodelsarguments(r) {
+function readOARouterModelsArguments(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1710,7 +1862,7 @@ function decode_oaroutermodelsarguments(r) {
   return v;
 }
 
-function decode_oarouterhostsarguments(r) {
+function readOARouterHostsArguments(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1745,7 +1897,7 @@ function decode_oarouterhostsarguments(r) {
   return v;
 }
 
-function decode_oarouterpickarguments(r) {
+function readOARouterPickArguments(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1764,7 +1916,7 @@ function decode_oarouterpickarguments(r) {
       if (key === "request") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.request = decode_pickrequest(r);
+        v.request = readPickRequest(r);
       } else {
         throw r.refuse("unknown_field");
       }
@@ -1780,7 +1932,7 @@ function decode_oarouterpickarguments(r) {
   return v;
 }
 
-function decode_oaserviceframe(r) {
+function readOAServiceFrame(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1827,7 +1979,7 @@ function decode_oaserviceframe(r) {
   return v;
 }
 
-function decode_oaservicereply(r) {
+function readOAServiceReply(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1878,7 +2030,7 @@ function decode_oaservicereply(r) {
   return v;
 }
 
-function decode_oaserviceerror(r) {
+function readOAServiceError(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1917,7 +2069,7 @@ function decode_oaserviceerror(r) {
   return v;
 }
 
-function decode_oaroutermodelsresult(r) {
+function readOARouterModelsResult(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1936,7 +2088,7 @@ function decode_oaroutermodelsresult(r) {
       if (key === "value") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.value = decode_modelssnapshot(r);
+        v.value = readModelsSnapshot(r);
       } else {
         throw r.refuse("unknown_field");
       }
@@ -1952,7 +2104,7 @@ function decode_oaroutermodelsresult(r) {
   return v;
 }
 
-function decode_oarouterhostsresult(r) {
+function readOARouterHostsResult(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -1971,7 +2123,7 @@ function decode_oarouterhostsresult(r) {
       if (key === "value") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.value = decode_hostssnapshot(r);
+        v.value = readHostsSnapshot(r);
       } else {
         throw r.refuse("unknown_field");
       }
@@ -1987,7 +2139,7 @@ function decode_oarouterhostsresult(r) {
   return v;
 }
 
-function decode_oarouterpickresult(r) {
+function readOARouterPickResult(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
   r.pos++;
@@ -2006,7 +2158,7 @@ function decode_oarouterpickresult(r) {
       if (key === "value") {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
-        v.value = decode_pickresult(r);
+        v.value = readPickResult(r);
       } else {
         throw r.refuse("unknown_field");
       }
@@ -2025,16 +2177,16 @@ function decode_oarouterpickresult(r) {
 export function decode(data) {
   const r = new Reader(data);
   r.ws();
-  const v = decode_pickrequest(r);
+  const v = readPickRequest(r);
   r.ws();
   if (r.pos < r.buf.length) throw r.refuse("trailing_bytes");
   return v;
 }
 
 // refusals is in the order two of them are chosen between.
-export const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"];
+const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"];
 
-export function refusalRank(word) {
+function refusalRank(word) {
   return refusals.indexOf(word);
 }
 
@@ -2092,16 +2244,16 @@ function _serviceCheck(kind, value, depth = 0) {
 
 const _serviceRecords = Object.create(null);
 _serviceRecords["HostAllowance"] = [["hosts","list<string>","never"],];
-_serviceRecords["PickRequest"] = [["model","string","never"],["fresh","bool","never"],["allowed","HostAllowance","absent"],];
-_serviceRecords["Caller"] = [["user_description","string","never"],["path_description","string","never"],];
-_serviceRecords["Observation"] = [["caller","Caller","never"],["took_ms","i64","never"],["cache_age_ms","i64","never"],];
-_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],];
+_serviceRecords["PickRequest"] = [["model","string","never"],["fresh","bool","never"],["allowed","HostAllowance","absent"],["profile","string","zero"],];
+_serviceRecords["Caller"] = [["userDescription","string","never"],["pathDescription","string","never"],];
+_serviceRecords["Observation"] = [["caller","Caller","never"],["tookMs","i64","never"],["cacheAgeMs","i64","never"],];
+_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],];
 _serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],];
 _serviceRecords["ModelsSnapshot"] = [["observation","Observation","never"],["models","list<Family>","never"],];
-_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],];
+_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],];
 _serviceRecords["Ask"] = [["at","string","never"],["caller","string","never"],["user","string","never"],["model","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],];
 _serviceRecords["HostsSnapshot"] = [["observation","Observation","never"],["hosts","list<HostState>","never"],["doubled","list<string>","never"],["asked","list<Ask>","never"],];
-_serviceRecords["Decision"] = [["asked","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],["model","string","never"],["endpoint","string","never"],["installed_on","list<string>","never"],["authorised","HostAllowance","absent"],["withheld","list<string>","never"],["loads","i64","never"],["why","string","never"],];
+_serviceRecords["Decision"] = [["asked","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],["model","string","never"],["endpoint","string","never"],["installedOn","list<string>","never"],["authorised","HostAllowance","absent"],["withheld","list<string>","never"],["loads","i64","never"],["why","string","never"],];
 _serviceRecords["PickResult"] = [["observation","Observation","never"],["decision","Decision","never"],];
 _serviceRecords["OARouterModelsArguments"] = [["fresh","bool","never"],];
 _serviceRecords["OARouterHostsArguments"] = [["fresh","bool","never"],];
@@ -2114,18 +2266,18 @@ _serviceRecords["OARouterHostsResult"] = [["value","HostsSnapshot","never"],];
 _serviceRecords["OARouterPickResult"] = [["value","PickResult","never"],];
 
 function _serviceRequest(service, method, argumentsBytes) {
-  return _serviceEncode(enc_oaserviceframe, {
+  return _serviceEncode(writeOAServiceFrame, {
     version:1, service, method, arguments:new TextDecoder("utf-8",{fatal:true}).decode(argumentsBytes)
   },0);
 }
 
 function _serviceResponse(frame, service, method) {
   if (!(frame instanceof Uint8Array)) throw new TypeError("transport frame must be Uint8Array");
-  const reply = _serviceDecode(decode_oaservicereply, frame, 0);
+  const reply = _serviceDecode(readOAServiceReply, frame, 0);
   if (reply.version !== 1) throw new DispatchError("unknown_version");
   if (reply.service !== service || reply.method !== method) throw new DispatchError("mismatched_response");
   if (!reply.ok) {
-    const error = _serviceDecode(decode_oaserviceerror, reply.payload, 1);
+    const error = _serviceDecode(readOAServiceError, reply.payload, 1);
     if (!error.code) throw new DispatchError("invalid_error");
     throw new ServiceError(error.code, error.message);
   }
@@ -2134,38 +2286,41 @@ function _serviceResponse(frame, service, method) {
 
 export class RouterClient {
   constructor(transport) { this._transport = transport; }
-  async Models(arg0) {
-    const args = newOARouterModelsArguments();
-    args["fresh"] = arg0;
-    _serviceCheck("OARouterModelsArguments", args);
-    const payload = _serviceEncode(enc_oaroutermodelsarguments, args, 1);
-    _serviceDecode(decode_oaroutermodelsarguments, payload, 1);
-    const request = _serviceRequest("abstraction.router/router@1", "Models", payload);
-    const reply = _serviceResponse(await this._transport.exchangeFrame(request), "abstraction.router/router@1", "Models");
-    const result = _serviceDecode(decode_oaroutermodelsresult, reply, 1);
-    return result.value;
+
+  async models(fresh) {
+    const _args = newOARouterModelsArguments();
+    _args.fresh = fresh;
+    _serviceCheck("OARouterModelsArguments", _args);
+    const _payload = _serviceEncode(writeOARouterModelsArguments, _args, 1);
+    _serviceDecode(readOARouterModelsArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "Models", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Models");
+    const _result = _serviceDecode(readOARouterModelsResult, _reply, 1);
+    return _result.value;
   }
-  async Hosts(arg0) {
-    const args = newOARouterHostsArguments();
-    args["fresh"] = arg0;
-    _serviceCheck("OARouterHostsArguments", args);
-    const payload = _serviceEncode(enc_oarouterhostsarguments, args, 1);
-    _serviceDecode(decode_oarouterhostsarguments, payload, 1);
-    const request = _serviceRequest("abstraction.router/router@1", "Hosts", payload);
-    const reply = _serviceResponse(await this._transport.exchangeFrame(request), "abstraction.router/router@1", "Hosts");
-    const result = _serviceDecode(decode_oarouterhostsresult, reply, 1);
-    return result.value;
+
+  async hosts(fresh) {
+    const _args = newOARouterHostsArguments();
+    _args.fresh = fresh;
+    _serviceCheck("OARouterHostsArguments", _args);
+    const _payload = _serviceEncode(writeOARouterHostsArguments, _args, 1);
+    _serviceDecode(readOARouterHostsArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "Hosts", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Hosts");
+    const _result = _serviceDecode(readOARouterHostsResult, _reply, 1);
+    return _result.value;
   }
-  async Pick(arg0) {
-    const args = newOARouterPickArguments();
-    args["request"] = arg0;
-    _serviceCheck("OARouterPickArguments", args);
-    const payload = _serviceEncode(enc_oarouterpickarguments, args, 1);
-    _serviceDecode(decode_oarouterpickarguments, payload, 1);
-    const request = _serviceRequest("abstraction.router/router@1", "Pick", payload);
-    const reply = _serviceResponse(await this._transport.exchangeFrame(request), "abstraction.router/router@1", "Pick");
-    const result = _serviceDecode(decode_oarouterpickresult, reply, 1);
-    return result.value;
+
+  async pick(request) {
+    const _args = newOARouterPickArguments();
+    _args.request = request;
+    _serviceCheck("OARouterPickArguments", _args);
+    const _payload = _serviceEncode(writeOARouterPickArguments, _args, 1);
+    _serviceDecode(readOARouterPickArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "Pick", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Pick");
+    const _result = _serviceDecode(readOARouterPickResult, _reply, 1);
+    return _result.value;
   }
 }
 export const RouterService = Object.freeze({wireName:"abstraction.router/router@1",Client:RouterClient});

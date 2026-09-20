@@ -204,16 +204,61 @@ func encList[T any](out []byte, v []T, depth int, enc func([]byte, *T, int) []by
 	return append(out, ']')
 }
 
-var Verdicts = []string{"resident", "would-load", "unservable", "not-here", "unparseable", "unauthorised"}
+// ServiceErrorCode is an open vocabulary: a reader keeps a word it has never heard, so
+// a value may be none of the constants below. ServiceErrorCode(word) and string(v)
+// convert between the raw word and the vocabulary.
+type ServiceErrorCode string
+
+const (
+	ServiceErrorCodeHandlerError      ServiceErrorCode = "handler_error"
+	ServiceErrorCodeInvalidResult     ServiceErrorCode = "invalid_result"
+	ServiceErrorCodeUnknownVersion    ServiceErrorCode = "unknown_version"
+	ServiceErrorCodeUnknownService    ServiceErrorCode = "unknown_service"
+	ServiceErrorCodeUnknownMethod     ServiceErrorCode = "unknown_method"
+	ServiceErrorCodeWrongMode         ServiceErrorCode = "wrong_mode"
+	ServiceErrorCodeInternal          ServiceErrorCode = "internal"
+	ServiceErrorCodeInvalidRequest    ServiceErrorCode = "invalid_request"
+	ServiceErrorCodeCallerRefused     ServiceErrorCode = "caller_refused"
+	ServiceErrorCodeUnknownOperation  ServiceErrorCode = "unknown_operation"
+	ServiceErrorCodePolicyUnavailable ServiceErrorCode = "policy_unavailable"
+	ServiceErrorCodeForbidden         ServiceErrorCode = "forbidden"
+)
+
+// ServiceErrorCodeValues returns every member of ServiceErrorCode in declaration order, in a new slice.
+func ServiceErrorCodeValues() []ServiceErrorCode {
+	return []ServiceErrorCode{ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodePolicyUnavailable, ServiceErrorCodeForbidden}
+}
+
+// Known reports whether v is a member of ServiceErrorCode.
+func (v ServiceErrorCode) Known() bool {
+	switch v {
+	case ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodePolicyUnavailable, ServiceErrorCodeForbidden:
+		return true
+	}
+	return false
+}
+
+var Profiles = []string{"chat", "embed", "transcription", "speech", "image"}
+
+var Verdicts = []string{"resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"}
+
+var WireKinds = []string{"openai-compatible", "anthropic-messages", "deepgram-prerecorded", "elevenlabs-stream", "stability-v2beta", "fal-queue", "replicate-predictions", "openai-realtime", "oa-remote@1"}
+
+var CredentialConsumers = []string{"abstraction.router/router@1"}
+
+var RouterErrorCodes = []string{"internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"}
 
 type HostAllowance struct {
 	Hosts []string
 }
 
+// profile is what the chosen host must serve the model for, a profiles member
+// or <owner>/<name>@<n>; empty is chat.
 type PickRequest struct {
 	Model   string
 	Fresh   bool
 	Allowed *HostAllowance
+	Profile string
 }
 
 type Caller struct {
@@ -227,11 +272,17 @@ type Observation struct {
 	CacheAgeMs int64
 }
 
+// hosted is true for a name read from a hosted host's model listing; such a
+// name is never resident. profiles are what the host's own model metadata says
+// this name serves (LM Studio's type, Ollama's capabilities); empty when the
+// host reports none, and then its HostState profiles apply.
 type Alias struct {
 	Host     string
 	Name     string
 	Resident bool
 	Servable bool
+	Hosted   bool
+	Profiles []string
 }
 
 type Family struct {
@@ -244,14 +295,35 @@ type ModelsSnapshot struct {
 	Models      []Family
 }
 
+// domain names the remote runtime a host belongs to: an oa-remote@1 host lists
+// itself, and each host that runtime reports, named <remote>/<host>, with
+// domain <remote>. The remote runtime's names, states and credential names are
+// its own; its credentials stay on it. profiles are what the host serves: those
+// its registration declares, or its wire's default (every seeded profile for a
+// host on this machine and openai-compatible, chat for another wire).
+// declared_by names what registered the host: operator for a person's
+// configuration, the product's name (ollama, lmstudio, docker-model-runner,
+// foundry-local) for a host that product's own record declared, or default for
+// a built-in address; it is omitted when unknown. A hosted host is a provider
+// endpoint reached over the network by its wire kind, one of wire_kinds or
+// <owner>/<name>@<n>. credential names the abstraction.credentials entry the
+// service applies to its listing and requests; the snapshot carries the name
+// and never a header value. A listing the applier refuses reads up false with
+// why credential:<outcome>:<name>. A host on this machine omits all three.
 type HostState struct {
-	Host      string
-	Base      string
-	Up        bool
-	Why       string
-	Installed int64
-	Resident  []string
-	Servable  bool
+	Host       string
+	Base       string
+	Up         bool
+	Why        string
+	Installed  int64
+	Resident   []string
+	Servable   bool
+	Hosted     bool
+	Wire       string
+	Credential string
+	DeclaredBy string
+	Profiles   []string
+	Domain     string
 }
 
 type Ask struct {
@@ -290,26 +362,26 @@ type PickResult struct {
 	Decision    Decision
 }
 
-type OARouterModelsArguments struct {
+type oaRouterModelsArguments struct {
 	Fresh bool
 }
 
-type OARouterHostsArguments struct {
+type oaRouterHostsArguments struct {
 	Fresh bool
 }
 
-type OARouterPickArguments struct {
+type oaRouterPickArguments struct {
 	Request PickRequest
 }
 
-type OAServiceFrame struct {
+type oaServiceFrame struct {
 	Version   int32
 	Service   string
 	Method    string
 	Arguments Raw
 }
 
-type OAServiceReply struct {
+type oaServiceReply struct {
 	Version int32
 	Service string
 	Method  string
@@ -317,20 +389,20 @@ type OAServiceReply struct {
 	Payload Raw
 }
 
-type OAServiceError struct {
+type oaServiceError struct {
 	Code    string
 	Message string
 }
 
-type OARouterModelsResult struct {
+type oaRouterModelsResult struct {
 	Value ModelsSnapshot
 }
 
-type OARouterHostsResult struct {
+type oaRouterHostsResult struct {
 	Value HostsSnapshot
 }
 
-type OARouterPickResult struct {
+type oaRouterPickResult struct {
 	Value PickResult
 }
 
@@ -370,6 +442,14 @@ func encPickRequest(out []byte, v *PickRequest, depth int) []byte {
 		out = esc(out, "allowed")
 		out = append(out, ':', ' ')
 		out = encHostAllowance(out, v.Allowed, depth+1)
+	}
+	if v.Profile != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "profile")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Profile)
 	}
 	out = append(out, '\n')
 	out = pad(out, depth)
@@ -450,6 +530,26 @@ func encAlias(out []byte, v *Alias, depth int) []byte {
 		out = append(out, 't', 'r', 'u', 'e')
 	} else {
 		out = append(out, 'f', 'a', 'l', 's', 'e')
+	}
+	if v.Hosted {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "hosted")
+		out = append(out, ':', ' ')
+		if v.Hosted {
+			out = append(out, 't', 'r', 'u', 'e')
+		} else {
+			out = append(out, 'f', 'a', 'l', 's', 'e')
+		}
+	}
+	if len(v.Profiles) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "profiles")
+		out = append(out, ':', ' ')
+		out = strs(out, v.Profiles, depth+1)
 	}
 	out = append(out, '\n')
 	out = pad(out, depth)
@@ -542,6 +642,58 @@ func encHostState(out []byte, v *HostState, depth int) []byte {
 		out = append(out, 't', 'r', 'u', 'e')
 	} else {
 		out = append(out, 'f', 'a', 'l', 's', 'e')
+	}
+	if v.Hosted {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "hosted")
+		out = append(out, ':', ' ')
+		if v.Hosted {
+			out = append(out, 't', 'r', 'u', 'e')
+		} else {
+			out = append(out, 'f', 'a', 'l', 's', 'e')
+		}
+	}
+	if v.Wire != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "wire")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Wire)
+	}
+	if v.Credential != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "credential")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Credential)
+	}
+	if v.DeclaredBy != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "declared_by")
+		out = append(out, ':', ' ')
+		out = esc(out, v.DeclaredBy)
+	}
+	if len(v.Profiles) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "profiles")
+		out = append(out, ':', ' ')
+		out = strs(out, v.Profiles, depth+1)
+	}
+	if v.Domain != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "domain")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Domain)
 	}
 	out = append(out, '\n')
 	out = pad(out, depth)
@@ -718,7 +870,7 @@ func encPickResult(out []byte, v *PickResult, depth int) []byte {
 	return append(out, '}')
 }
 
-func encOARouterModelsArguments(out []byte, v *OARouterModelsArguments, depth int) []byte {
+func encOARouterModelsArguments(out []byte, v *oaRouterModelsArguments, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -734,7 +886,7 @@ func encOARouterModelsArguments(out []byte, v *OARouterModelsArguments, depth in
 	return append(out, '}')
 }
 
-func encOARouterHostsArguments(out []byte, v *OARouterHostsArguments, depth int) []byte {
+func encOARouterHostsArguments(out []byte, v *oaRouterHostsArguments, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -750,7 +902,7 @@ func encOARouterHostsArguments(out []byte, v *OARouterHostsArguments, depth int)
 	return append(out, '}')
 }
 
-func encOARouterPickArguments(out []byte, v *OARouterPickArguments, depth int) []byte {
+func encOARouterPickArguments(out []byte, v *oaRouterPickArguments, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -762,7 +914,7 @@ func encOARouterPickArguments(out []byte, v *OARouterPickArguments, depth int) [
 	return append(out, '}')
 }
 
-func encOAServiceFrame(out []byte, v *OAServiceFrame, depth int) []byte {
+func encOAServiceFrame(out []byte, v *oaServiceFrame, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -792,7 +944,7 @@ func encOAServiceFrame(out []byte, v *OAServiceFrame, depth int) []byte {
 	return append(out, '}')
 }
 
-func encOAServiceReply(out []byte, v *OAServiceReply, depth int) []byte {
+func encOAServiceReply(out []byte, v *oaServiceReply, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -832,7 +984,7 @@ func encOAServiceReply(out []byte, v *OAServiceReply, depth int) []byte {
 	return append(out, '}')
 }
 
-func encOAServiceError(out []byte, v *OAServiceError, depth int) []byte {
+func encOAServiceError(out []byte, v *oaServiceError, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -850,7 +1002,7 @@ func encOAServiceError(out []byte, v *OAServiceError, depth int) []byte {
 	return append(out, '}')
 }
 
-func encOARouterModelsResult(out []byte, v *OARouterModelsResult, depth int) []byte {
+func encOARouterModelsResult(out []byte, v *oaRouterModelsResult, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -862,7 +1014,7 @@ func encOARouterModelsResult(out []byte, v *OARouterModelsResult, depth int) []b
 	return append(out, '}')
 }
 
-func encOARouterHostsResult(out []byte, v *OARouterHostsResult, depth int) []byte {
+func encOARouterHostsResult(out []byte, v *oaRouterHostsResult, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -874,7 +1026,7 @@ func encOARouterHostsResult(out []byte, v *OARouterHostsResult, depth int) []byt
 	return append(out, '}')
 }
 
-func encOARouterPickResult(out []byte, v *OARouterPickResult, depth int) []byte {
+func encOARouterPickResult(out []byte, v *oaRouterPickResult, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -1451,7 +1603,7 @@ func lexicalTimestamp(s string) bool {
 
 // [DEF-G2] rfc3339-micros: what a writer emits. Exactly six fractional digits,
 // upper-case separators, UTC.
-func MicrosTimestamp(s string) bool {
+func microsTimestamp(s string) bool {
 	return len(s) == 27 && normalizedTimestamp(s) == s
 }
 
@@ -1461,7 +1613,7 @@ func (r *reader) timestamp() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !WideTimestamp(s) {
+	if !wideTimestamp(s) {
 		r.pos = at
 		return "", r.refuse("bad_timestamp")
 	}
@@ -1562,7 +1714,7 @@ func normalizedTimestamp(s string) string {
 	}
 	return string(out)
 }
-func WideTimestamp(s string) bool { return normalizedTimestamp(s) != "" }
+func wideTimestamp(s string) bool { return normalizedTimestamp(s) != "" }
 func writeTimestamp(s string) string {
 	result := normalizedTimestamp(s)
 	if result == "" {
@@ -1688,6 +1840,16 @@ func (r *reader) decodePickRequest() (*PickRequest, error) {
 					return nil, err
 				}
 				v.Allowed = x
+			case "profile":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Profile = x
 			default:
 				return nil, r.refuse("unknown_field")
 			}
@@ -1929,6 +2091,26 @@ func (r *reader) decodeAlias() (*Alias, error) {
 					return nil, err
 				}
 				v.Servable = x
+			case "hosted":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.Hosted = x
+			case "profiles":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Profiles = x
 			default:
 				if err := r.skipValue(); err != nil {
 					return nil, err
@@ -2192,6 +2374,66 @@ func (r *reader) decodeHostState() (*HostState, error) {
 					return nil, err
 				}
 				v.Servable = x
+			case "hosted":
+				if seen&128 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 128
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.Hosted = x
+			case "wire":
+				if seen&256 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 256
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Wire = x
+			case "credential":
+				if seen&512 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 512
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Credential = x
+			case "declared_by":
+				if seen&1024 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1024
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.DeclaredBy = x
+			case "profiles":
+				if seen&2048 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2048
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Profiles = x
+			case "domain":
+				if seen&4096 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4096
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Domain = x
 			default:
 				if err := r.skipValue(); err != nil {
 					return nil, err
@@ -2659,7 +2901,7 @@ func (r *reader) decodePickResult() (*PickResult, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOARouterModelsArguments() (*OARouterModelsArguments, error) {
+func (r *reader) decodeOARouterModelsArguments() (*oaRouterModelsArguments, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -2667,7 +2909,7 @@ func (r *reader) decodeOARouterModelsArguments() (*OARouterModelsArguments, erro
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterModelsArguments{}
+	v := &oaRouterModelsArguments{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2718,7 +2960,7 @@ func (r *reader) decodeOARouterModelsArguments() (*OARouterModelsArguments, erro
 	return v, nil
 }
 
-func (r *reader) decodeOARouterHostsArguments() (*OARouterHostsArguments, error) {
+func (r *reader) decodeOARouterHostsArguments() (*oaRouterHostsArguments, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -2726,7 +2968,7 @@ func (r *reader) decodeOARouterHostsArguments() (*OARouterHostsArguments, error)
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterHostsArguments{}
+	v := &oaRouterHostsArguments{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2777,7 +3019,7 @@ func (r *reader) decodeOARouterHostsArguments() (*OARouterHostsArguments, error)
 	return v, nil
 }
 
-func (r *reader) decodeOARouterPickArguments() (*OARouterPickArguments, error) {
+func (r *reader) decodeOARouterPickArguments() (*oaRouterPickArguments, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -2785,7 +3027,7 @@ func (r *reader) decodeOARouterPickArguments() (*OARouterPickArguments, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterPickArguments{}
+	v := &oaRouterPickArguments{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2836,7 +3078,7 @@ func (r *reader) decodeOARouterPickArguments() (*OARouterPickArguments, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOAServiceFrame() (*OAServiceFrame, error) {
+func (r *reader) decodeOAServiceFrame() (*oaServiceFrame, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -2844,7 +3086,7 @@ func (r *reader) decodeOAServiceFrame() (*OAServiceFrame, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OAServiceFrame{}
+	v := &oaServiceFrame{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2925,7 +3167,7 @@ func (r *reader) decodeOAServiceFrame() (*OAServiceFrame, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOAServiceReply() (*OAServiceReply, error) {
+func (r *reader) decodeOAServiceReply() (*oaServiceReply, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -2933,7 +3175,7 @@ func (r *reader) decodeOAServiceReply() (*OAServiceReply, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OAServiceReply{}
+	v := &oaServiceReply{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3024,7 +3266,7 @@ func (r *reader) decodeOAServiceReply() (*OAServiceReply, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOAServiceError() (*OAServiceError, error) {
+func (r *reader) decodeOAServiceError() (*oaServiceError, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -3032,7 +3274,7 @@ func (r *reader) decodeOAServiceError() (*OAServiceError, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OAServiceError{}
+	v := &oaServiceError{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3093,7 +3335,7 @@ func (r *reader) decodeOAServiceError() (*OAServiceError, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOARouterModelsResult() (*OARouterModelsResult, error) {
+func (r *reader) decodeOARouterModelsResult() (*oaRouterModelsResult, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -3101,7 +3343,7 @@ func (r *reader) decodeOARouterModelsResult() (*OARouterModelsResult, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterModelsResult{}
+	v := &oaRouterModelsResult{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3152,7 +3394,7 @@ func (r *reader) decodeOARouterModelsResult() (*OARouterModelsResult, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOARouterHostsResult() (*OARouterHostsResult, error) {
+func (r *reader) decodeOARouterHostsResult() (*oaRouterHostsResult, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -3160,7 +3402,7 @@ func (r *reader) decodeOARouterHostsResult() (*OARouterHostsResult, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterHostsResult{}
+	v := &oaRouterHostsResult{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3211,7 +3453,7 @@ func (r *reader) decodeOARouterHostsResult() (*OARouterHostsResult, error) {
 	return v, nil
 }
 
-func (r *reader) decodeOARouterPickResult() (*OARouterPickResult, error) {
+func (r *reader) decodeOARouterPickResult() (*oaRouterPickResult, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
 	}
@@ -3219,7 +3461,7 @@ func (r *reader) decodeOARouterPickResult() (*OARouterPickResult, error) {
 		return nil, err
 	}
 	r.pos++
-	v := &OARouterPickResult{}
+	v := &oaRouterPickResult{}
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3284,12 +3526,12 @@ func Decode(in []byte) (*PickRequest, error) {
 	return v, nil
 }
 
-// Refusals is in the order two of them are chosen between.
+// refusals is in the order two of them are chosen between.
 
-var Refusals = []string{"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"}
+var refusals = []string{"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"}
 
-func RefusalRank(word string) int {
-	for i, w := range Refusals {
+func refusalRank(word string) int {
+	for i, w := range refusals {
 		if w == word {
 			return i
 		}
@@ -3298,11 +3540,11 @@ func RefusalRank(word string) int {
 }
 
 // A transport consumes or copies frames before returning. WriteFrame is one-way.
-type FrameWriter interface{ WriteFrame([]byte) error }
+type FrameWriter interface{ WriteFrame(frame []byte) error }
 type DispatchError string
 
 func (e DispatchError) Error() string { return string(e) }
-func servicePayload(frame []byte) (*OAServiceFrame, error) {
+func servicePayload(frame []byte) (*oaServiceFrame, error) {
 	r := &reader{buf: frame}
 	r.ws()
 	v, err := r.decodeOAServiceFrame()
@@ -3321,9 +3563,14 @@ func servicePayload(frame []byte) (*OAServiceFrame, error) {
 
 // ExchangeFrame returns the response associated with this call. Correlation,
 // serialization and deadlines belong to the transport, not this codec.
-type FrameExchanger interface{ ExchangeFrame([]byte) ([]byte, error) }
+type FrameExchanger interface {
+	ExchangeFrame(frame []byte) ([]byte, error)
+}
+
+// ServiceError is a reply on the error channel. Code is a ServiceErrorCode
+// constant or a word this package has never heard.
 type ServiceError struct {
-	Code    string
+	Code    ServiceErrorCode
 	Message string
 }
 
@@ -3331,7 +3578,7 @@ func (e *ServiceError) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
-	return e.Code
+	return string(e.Code)
 }
 func serviceResponse(frame []byte, service, method string) (Raw, error) {
 	r := &reader{buf: frame}
@@ -3364,11 +3611,11 @@ func serviceResponse(frame []byte, service, method string) (Raw, error) {
 		if e.Code == "" {
 			return "", DispatchError("invalid_error")
 		}
-		return "", &ServiceError{Code: e.Code, Message: e.Message}
+		return "", &ServiceError{Code: ServiceErrorCode(e.Code), Message: e.Message}
 	}
 	return v.Payload, nil
 }
-func serviceReply(v *OAServiceFrame, payload Raw, err error) (frame []byte, outErr error) {
+func serviceReply(v *oaServiceFrame, payload Raw, err error) (frame []byte, outErr error) {
 	defer func() {
 		if p := recover(); p != nil {
 			if e, ok := p.(*Refusal); ok {
@@ -3379,13 +3626,13 @@ func serviceReply(v *OAServiceFrame, payload Raw, err error) (frame []byte, outE
 			}
 		}
 	}()
-	reply := OAServiceReply{Version: 1, Service: v.Service, Method: v.Method, Ok: err == nil, Payload: payload}
+	reply := oaServiceReply{Version: 1, Service: v.Service, Method: v.Method, Ok: err == nil, Payload: payload}
 	if err != nil {
-		e := OAServiceError{Code: "handler_error", Message: "handler failed"}
+		e := oaServiceError{Code: string(ServiceErrorCodeHandlerError), Message: "handler failed"}
 		switch x := err.(type) {
 		case *ServiceError:
 			if x.Code != "" {
-				e.Code = x.Code
+				e.Code = string(x.Code)
 			}
 			e.Message = x.Message
 		case DispatchError:
@@ -3407,10 +3654,108 @@ func serviceReply(v *OAServiceFrame, payload Raw, err error) (frame []byte, outE
 	return frame, nil
 }
 
+// EndpointContract is abstraction.facade/endpoint@1, which every dispatcher
+// answers beside its own service.
+const EndpointContract = "abstraction.facade/endpoint@1"
+
+// DescribedService is a dispatcher of any generated package, as
+// abstraction.facade/endpoint@1 Describe lists it.
+type DescribedService interface {
+	DescribeService() (contract string, ready bool, why string)
+}
+
+// DescribeEndpoint answers an abstraction.facade/endpoint@1 Describe frame for
+// an endpoint hosting services, in that order. program and version are the
+// provider's own display name and version, never authority. A frame for another
+// service reads unknown_service.
+func DescribeEndpoint(frame []byte, program, version string, services ...DescribedService) ([]byte, error) {
+	v, err := servicePayload(frame)
+	if err != nil {
+		return nil, err
+	}
+	if v.Service != EndpointContract {
+		return serviceReply(v, "", DispatchError("unknown_service"))
+	}
+	if v.Method != "Describe" {
+		return serviceReply(v, "", DispatchError("unknown_method"))
+	}
+	r := &reader{buf: []byte(v.Arguments)}
+	r.ws()
+	empty := false
+	if r.pos < len(r.buf) && r.buf[r.pos] == '{' {
+		r.pos++
+		r.ws()
+		if r.pos < len(r.buf) && r.buf[r.pos] == '}' {
+			r.pos++
+			r.ws()
+			empty = r.pos == len(r.buf)
+		}
+	}
+	if !empty {
+		return serviceReply(v, "", &Refusal{Word: "unknown_field"})
+	}
+	out := append([]byte(nil), "{\"value\":{\"outcome\":\"described\",\"program\":"...)
+	out = esc(out, program)
+	out = append(out, ",\"version\":"...)
+	out = esc(out, version)
+	out = append(out, ",\"services\":["...)
+	for i, service := range services {
+		contract, ready, why := service.DescribeService()
+		readiness := "ready"
+		if !ready {
+			readiness = "not_ready"
+		}
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, "{\"contract\":"...)
+		out = esc(out, contract)
+		out = append(out, ",\"readiness\":\""+readiness+"\",\"why\":"...)
+		out = esc(out, why)
+		out = append(out, ",\"guarantees\":[],\"capabilities\":{}}"...)
+	}
+	return serviceReply(v, Raw(append(out, "]}}"...)), nil)
+}
+
+// ServedService is a dispatcher of any generated package that ServeEndpoint
+// routes frames to by its wire name.
+type ServedService interface {
+	DescribedService
+	ServiceContract() string
+}
+
+// ServeEndpoint answers one request-response frame for an endpoint hosting
+// services. A Describe frame lists all of them in the order given; any other
+// frame goes to the service it names. A service that takes only one-way frames
+// reads wrong_mode, and a frame naming none of them reads unknown_service.
+func ServeEndpoint(frame []byte, program, version string, services ...ServedService) ([]byte, error) {
+	v, err := servicePayload(frame)
+	if err != nil {
+		return nil, err
+	}
+	if v.Service == EndpointContract {
+		described := make([]DescribedService, len(services))
+		for i, service := range services {
+			described[i] = service
+		}
+		return DescribeEndpoint(frame, program, version, described...)
+	}
+	for _, service := range services {
+		if service.ServiceContract() != v.Service {
+			continue
+		}
+		if exchanger, ok := service.(interface{ ExchangeFrame([]byte) ([]byte, error) }); ok {
+			return exchanger.ExchangeFrame(frame)
+		}
+		return serviceReply(v, "", DispatchError("wrong_mode"))
+	}
+	return serviceReply(v, "", DispatchError("unknown_service"))
+}
+
 type Router interface {
-	Models(bool) (ModelsSnapshot, error)
-	Hosts(bool) (HostsSnapshot, error)
-	Pick(PickRequest) (PickResult, error)
+	Models(fresh bool) (ModelsSnapshot, error)
+	Hosts(fresh bool) (HostsSnapshot, error)
+	Pick(request PickRequest) (PickResult, error)
 }
 type RouterTransport interface {
 	FrameExchanger
@@ -3421,7 +3766,7 @@ func NewRouterClient(t RouterTransport) *RouterClient { return &RouterClient{tra
 
 type RouterDispatcher struct{ Handler Router }
 
-func (c *RouterClient) Models(arg0 bool) (result ModelsSnapshot, err error) {
+func (c *RouterClient) Models(fresh bool) (result ModelsSnapshot, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			if e, ok := p.(*Refusal); ok {
@@ -3431,8 +3776,8 @@ func (c *RouterClient) Models(arg0 bool) (result ModelsSnapshot, err error) {
 			}
 		}
 	}()
-	args := OARouterModelsArguments{Fresh: arg0}
-	v := OAServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Models", Arguments: Raw(encOARouterModelsArguments(nil, &args, 1))}
+	args := oaRouterModelsArguments{Fresh: fresh}
+	v := oaServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Models", Arguments: Raw(encOARouterModelsArguments(nil, &args, 1))}
 	frame := encOAServiceFrame(nil, &v, 0)
 	if _, err = servicePayload(frame); err != nil {
 		return
@@ -3449,7 +3794,7 @@ func (c *RouterClient) Models(arg0 bool) (result ModelsSnapshot, err error) {
 	}
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
-	var decoded *OARouterModelsResult
+	var decoded *oaRouterModelsResult
 	decoded, err = r.decodeOARouterModelsResult()
 	if err != nil {
 		return
@@ -3463,7 +3808,7 @@ func (c *RouterClient) Models(arg0 bool) (result ModelsSnapshot, err error) {
 	result = decoded.Value
 	return
 }
-func (c *RouterClient) Hosts(arg0 bool) (result HostsSnapshot, err error) {
+func (c *RouterClient) Hosts(fresh bool) (result HostsSnapshot, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			if e, ok := p.(*Refusal); ok {
@@ -3473,8 +3818,8 @@ func (c *RouterClient) Hosts(arg0 bool) (result HostsSnapshot, err error) {
 			}
 		}
 	}()
-	args := OARouterHostsArguments{Fresh: arg0}
-	v := OAServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Hosts", Arguments: Raw(encOARouterHostsArguments(nil, &args, 1))}
+	args := oaRouterHostsArguments{Fresh: fresh}
+	v := oaServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Hosts", Arguments: Raw(encOARouterHostsArguments(nil, &args, 1))}
 	frame := encOAServiceFrame(nil, &v, 0)
 	if _, err = servicePayload(frame); err != nil {
 		return
@@ -3491,7 +3836,7 @@ func (c *RouterClient) Hosts(arg0 bool) (result HostsSnapshot, err error) {
 	}
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
-	var decoded *OARouterHostsResult
+	var decoded *oaRouterHostsResult
 	decoded, err = r.decodeOARouterHostsResult()
 	if err != nil {
 		return
@@ -3505,7 +3850,7 @@ func (c *RouterClient) Hosts(arg0 bool) (result HostsSnapshot, err error) {
 	result = decoded.Value
 	return
 }
-func (c *RouterClient) Pick(arg0 PickRequest) (result PickResult, err error) {
+func (c *RouterClient) Pick(request PickRequest) (result PickResult, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			if e, ok := p.(*Refusal); ok {
@@ -3515,8 +3860,8 @@ func (c *RouterClient) Pick(arg0 PickRequest) (result PickResult, err error) {
 			}
 		}
 	}()
-	args := OARouterPickArguments{Request: arg0}
-	v := OAServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Pick", Arguments: Raw(encOARouterPickArguments(nil, &args, 1))}
+	args := oaRouterPickArguments{Request: request}
+	v := oaServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Pick", Arguments: Raw(encOARouterPickArguments(nil, &args, 1))}
 	frame := encOAServiceFrame(nil, &v, 0)
 	if _, err = servicePayload(frame); err != nil {
 		return
@@ -3533,7 +3878,7 @@ func (c *RouterClient) Pick(arg0 PickRequest) (result PickResult, err error) {
 	}
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
-	var decoded *OARouterPickResult
+	var decoded *oaRouterPickResult
 	decoded, err = r.decodeOARouterPickResult()
 	if err != nil {
 		return
@@ -3547,6 +3892,21 @@ func (c *RouterClient) Pick(arg0 PickRequest) (result PickResult, err error) {
 	result = decoded.Value
 	return
 }
+
+// DescribeService is this dispatcher's service as abstraction.facade/endpoint@1 Describe lists it:
+// ready unless its handler implements Ready() (bool, string) and reports otherwise.
+func (d *RouterDispatcher) DescribeService() (contract string, ready bool, why string) {
+	if h, ok := d.Handler.(interface{ Ready() (bool, string) }); ok {
+		if ready, why = h.Ready(); ready {
+			why = ""
+		}
+		return "abstraction.router/router@1", ready, why
+	}
+	return "abstraction.router/router@1", true, ""
+}
+
+// ServiceContract is the wire name ServeEndpoint routes this dispatcher's frames by.
+func (d *RouterDispatcher) ServiceContract() string { return "abstraction.router/router@1" }
 func (d *RouterDispatcher) WriteFrame(frame []byte) error {
 	v, err := servicePayload(frame)
 	if err != nil {
@@ -3570,6 +3930,9 @@ func (d *RouterDispatcher) ExchangeFrame(frame []byte) ([]byte, error) {
 	v, err := servicePayload(frame)
 	if err != nil {
 		return nil, err
+	}
+	if v.Service == EndpointContract {
+		return DescribeEndpoint(frame, "", "", d)
 	}
 	if v.Service != "abstraction.router/router@1" {
 		return serviceReply(v, "", DispatchError("unknown_service"))
@@ -3618,14 +3981,14 @@ func (d *RouterDispatcher) ExchangeFrame(frame []byte) ([]byte, error) {
 		return serviceReply(v, "", DispatchError("unknown_method"))
 	}
 }
-func (d *RouterDispatcher) invokeModels(args *OARouterModelsArguments) (payload Raw, err error) {
+func (d *RouterDispatcher) invokeModels(args *oaRouterModelsArguments) (payload Raw, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			payload = ""
 			if _, ok := p.(*Refusal); ok {
-				err = &ServiceError{Code: "invalid_result"}
+				err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 			} else {
-				err = &ServiceError{Code: "handler_error", Message: "handler failed"}
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
 			}
 		}
 	}()
@@ -3634,30 +3997,30 @@ func (d *RouterDispatcher) invokeModels(args *OARouterModelsArguments) (payload 
 	if err != nil {
 		return
 	}
-	value := OARouterModelsResult{Value: result}
+	value := oaRouterModelsResult{Value: result}
 	payload = Raw(encOARouterModelsResult(nil, &value, 1))
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
 	if _, e := r.decodeOARouterModelsResult(); e != nil {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 		return
 	}
 	r.ws()
 	if r.pos != len(r.buf) {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 	}
 	return
 }
-func (d *RouterDispatcher) invokeHosts(args *OARouterHostsArguments) (payload Raw, err error) {
+func (d *RouterDispatcher) invokeHosts(args *oaRouterHostsArguments) (payload Raw, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			payload = ""
 			if _, ok := p.(*Refusal); ok {
-				err = &ServiceError{Code: "invalid_result"}
+				err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 			} else {
-				err = &ServiceError{Code: "handler_error", Message: "handler failed"}
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
 			}
 		}
 	}()
@@ -3666,30 +4029,30 @@ func (d *RouterDispatcher) invokeHosts(args *OARouterHostsArguments) (payload Ra
 	if err != nil {
 		return
 	}
-	value := OARouterHostsResult{Value: result}
+	value := oaRouterHostsResult{Value: result}
 	payload = Raw(encOARouterHostsResult(nil, &value, 1))
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
 	if _, e := r.decodeOARouterHostsResult(); e != nil {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 		return
 	}
 	r.ws()
 	if r.pos != len(r.buf) {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 	}
 	return
 }
-func (d *RouterDispatcher) invokePick(args *OARouterPickArguments) (payload Raw, err error) {
+func (d *RouterDispatcher) invokePick(args *oaRouterPickArguments) (payload Raw, err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			payload = ""
 			if _, ok := p.(*Refusal); ok {
-				err = &ServiceError{Code: "invalid_result"}
+				err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 			} else {
-				err = &ServiceError{Code: "handler_error", Message: "handler failed"}
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
 			}
 		}
 	}()
@@ -3698,19 +4061,19 @@ func (d *RouterDispatcher) invokePick(args *OARouterPickArguments) (payload Raw,
 	if err != nil {
 		return
 	}
-	value := OARouterPickResult{Value: result}
+	value := oaRouterPickResult{Value: result}
 	payload = Raw(encOARouterPickResult(nil, &value, 1))
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
 	if _, e := r.decodeOARouterPickResult(); e != nil {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 		return
 	}
 	r.ws()
 	if r.pos != len(r.buf) {
 		payload = ""
-		err = &ServiceError{Code: "invalid_result"}
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 	}
 	return
 }

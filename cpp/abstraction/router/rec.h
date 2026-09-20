@@ -15,6 +15,157 @@ namespace abstraction::router {
 
 using Raw = std::string;
 
+class Refusal : public std::runtime_error {
+public:
+    Refusal(const char* word, std::size_t offset)
+        : std::runtime_error(std::string("refused: ") + word + " at byte " + std::to_string(offset)),
+          word(word),
+          offset(offset) {}
+    const char* word;
+    std::size_t offset;
+};
+
+inline const std::vector<std::string> kServiceErrorCodeNames = {"handler_error", "invalid_result", "unknown_version", "unknown_service", "unknown_method", "wrong_mode", "internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"};
+inline constexpr std::string_view kServiceErrorCodeHandlerError = "handler_error";
+inline constexpr std::string_view kServiceErrorCodeInvalidResult = "invalid_result";
+inline constexpr std::string_view kServiceErrorCodeUnknownVersion = "unknown_version";
+inline constexpr std::string_view kServiceErrorCodeUnknownService = "unknown_service";
+inline constexpr std::string_view kServiceErrorCodeUnknownMethod = "unknown_method";
+inline constexpr std::string_view kServiceErrorCodeWrongMode = "wrong_mode";
+inline constexpr std::string_view kServiceErrorCodeInternal = "internal";
+inline constexpr std::string_view kServiceErrorCodeInvalidRequest = "invalid_request";
+inline constexpr std::string_view kServiceErrorCodeCallerRefused = "caller_refused";
+inline constexpr std::string_view kServiceErrorCodeUnknownOperation = "unknown_operation";
+inline constexpr std::string_view kServiceErrorCodePolicyUnavailable = "policy_unavailable";
+inline constexpr std::string_view kServiceErrorCodeForbidden = "forbidden";
+
+inline const std::vector<std::string> kProfiles = {"chat", "embed", "transcription", "speech", "image"};
+
+inline const std::vector<std::string> kVerdicts = {"resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"};
+
+inline const std::vector<std::string> kWireKinds = {"openai-compatible", "anthropic-messages", "deepgram-prerecorded", "elevenlabs-stream", "stability-v2beta", "fal-queue", "replicate-predictions", "openai-realtime", "oa-remote@1"};
+
+inline const std::vector<std::string> kCredentialConsumers = {"abstraction.router/router@1"};
+
+inline const std::vector<std::string> kRouterErrorCodes = {"internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"};
+
+struct HostAllowance {
+    std::vector<std::string> hosts;
+};
+
+// profile is what the chosen host must serve the model for, a profiles member
+// or <owner>/<name>@<n>; empty is chat.
+struct PickRequest {
+    std::string model;
+    bool fresh = false;
+    std::optional<HostAllowance> allowed;
+    std::string profile;
+};
+
+struct Caller {
+    std::string user_description;
+    std::string path_description;
+};
+
+struct Observation {
+    Caller caller;
+    std::int64_t took_ms = 0;
+    std::int64_t cache_age_ms = 0;
+};
+
+// hosted is true for a name read from a hosted host's model listing; such a
+// name is never resident. profiles are what the host's own model metadata says
+// this name serves (LM Studio's type, Ollama's capabilities); empty when the
+// host reports none, and then its HostState profiles apply.
+struct Alias {
+    std::string host;
+    std::string name;
+    bool resident = false;
+    bool servable = false;
+    bool hosted = false;
+    std::vector<std::string> profiles;
+};
+
+struct Family {
+    std::string family;
+    std::vector<Alias> names;
+};
+
+struct ModelsSnapshot {
+    Observation observation;
+    std::vector<Family> models;
+};
+
+// domain names the remote runtime a host belongs to: an oa-remote@1 host lists
+// itself, and each host that runtime reports, named <remote>/<host>, with
+// domain <remote>. The remote runtime's names, states and credential names are
+// its own; its credentials stay on it. profiles are what the host serves: those
+// its registration declares, or its wire's default (every seeded profile for a
+// host on this machine and openai-compatible, chat for another wire).
+// declared_by names what registered the host: operator for a person's
+// configuration, the product's name (ollama, lmstudio, docker-model-runner,
+// foundry-local) for a host that product's own record declared, or default for
+// a built-in address; it is omitted when unknown. A hosted host is a provider
+// endpoint reached over the network by its wire kind, one of wire_kinds or
+// <owner>/<name>@<n>. credential names the abstraction.credentials entry the
+// service applies to its listing and requests; the snapshot carries the name
+// and never a header value. A listing the applier refuses reads up false with
+// why credential:<outcome>:<name>. A host on this machine omits all three.
+struct HostState {
+    std::string host;
+    std::string base;
+    bool up = false;
+    std::string why;
+    std::int64_t installed = 0;
+    std::vector<std::string> resident;
+    bool servable = false;
+    bool hosted = false;
+    std::string wire;
+    std::string credential;
+    std::string declared_by;
+    std::vector<std::string> profiles;
+    std::string domain;
+};
+
+struct Ask {
+    std::string at;
+    std::string caller;
+    std::string user;
+    std::string model;
+    std::string family;
+    std::string verdict;
+    std::string host;
+};
+
+struct HostsSnapshot {
+    Observation observation;
+    std::vector<HostState> hosts;
+    std::vector<std::string> doubled;
+    std::vector<Ask> asked;
+};
+
+struct Decision {
+    std::string asked;
+    std::string family;
+    std::string verdict;
+    std::string host;
+    std::string model;
+    std::string endpoint;
+    std::vector<std::string> installed_on;
+    std::optional<HostAllowance> authorised;
+    std::vector<std::string> withheld;
+    std::int64_t loads = 0;
+    std::string why;
+};
+
+struct PickResult {
+    Observation observation;
+    Decision decision;
+};
+
+// Codec machinery. Nothing here is API; it may change in any release.
+namespace detail {
+
 inline void esc(std::string& out, const std::string& s);
 
 inline void esc_byte(std::string& out, unsigned char c) {
@@ -56,6 +207,8 @@ inline void strs(std::string& out, const std::vector<std::string>& v, int depth)
     pad(out, depth);
     out += ']';
 }
+
+
 
 inline bool ws(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
@@ -151,92 +304,6 @@ inline void enc_list(std::string& out, const std::vector<T>& v, int depth,
     out += ']';
 }
 
-inline const std::vector<std::string> kVerdicts = {"resident", "would-load", "unservable", "not-here", "unparseable", "unauthorised"};
-
-struct HostAllowance {
-    std::vector<std::string> hosts;
-};
-
-struct PickRequest {
-    std::string model;
-    bool fresh = false;
-    std::optional<HostAllowance> allowed;
-};
-
-struct Caller {
-    std::string user_description;
-    std::string path_description;
-};
-
-struct Observation {
-    Caller caller;
-    std::int64_t took_ms = 0;
-    std::int64_t cache_age_ms = 0;
-};
-
-struct Alias {
-    std::string host;
-    std::string name;
-    bool resident = false;
-    bool servable = false;
-};
-
-struct Family {
-    std::string family;
-    std::vector<Alias> names;
-};
-
-struct ModelsSnapshot {
-    Observation observation;
-    std::vector<Family> models;
-};
-
-struct HostState {
-    std::string host;
-    std::string base;
-    bool up = false;
-    std::string why;
-    std::int64_t installed = 0;
-    std::vector<std::string> resident;
-    bool servable = false;
-};
-
-struct Ask {
-    std::string at;
-    std::string caller;
-    std::string user;
-    std::string model;
-    std::string family;
-    std::string verdict;
-    std::string host;
-};
-
-struct HostsSnapshot {
-    Observation observation;
-    std::vector<HostState> hosts;
-    std::vector<std::string> doubled;
-    std::vector<Ask> asked;
-};
-
-struct Decision {
-    std::string asked;
-    std::string family;
-    std::string verdict;
-    std::string host;
-    std::string model;
-    std::string endpoint;
-    std::vector<std::string> installed_on;
-    std::optional<HostAllowance> authorised;
-    std::vector<std::string> withheld;
-    std::int64_t loads = 0;
-    std::string why;
-};
-
-struct PickResult {
-    Observation observation;
-    Decision decision;
-};
-
 struct OARouterModelsArguments {
     bool fresh = false;
 };
@@ -280,8 +347,29 @@ struct OARouterHostsResult {
 struct OARouterPickResult {
     PickResult value;
 };
+inline void enc_host_allowance(std::string&, const HostAllowance&, int);
+inline void enc_pick_request(std::string&, const PickRequest&, int);
+inline void enc_caller(std::string&, const Caller&, int);
+inline void enc_observation(std::string&, const Observation&, int);
+inline void enc_alias(std::string&, const Alias&, int);
+inline void enc_family(std::string&, const Family&, int);
+inline void enc_models_snapshot(std::string&, const ModelsSnapshot&, int);
+inline void enc_host_state(std::string&, const HostState&, int);
+inline void enc_ask(std::string&, const Ask&, int);
+inline void enc_hosts_snapshot(std::string&, const HostsSnapshot&, int);
+inline void enc_decision(std::string&, const Decision&, int);
+inline void enc_pick_result(std::string&, const PickResult&, int);
+inline void enc_oa_router_models_arguments(std::string&, const OARouterModelsArguments&, int);
+inline void enc_oa_router_hosts_arguments(std::string&, const OARouterHostsArguments&, int);
+inline void enc_oa_router_pick_arguments(std::string&, const OARouterPickArguments&, int);
+inline void enc_oa_service_frame(std::string&, const OAServiceFrame&, int);
+inline void enc_oa_service_reply(std::string&, const OAServiceReply&, int);
+inline void enc_oa_service_error(std::string&, const OAServiceError&, int);
+inline void enc_oa_router_models_result(std::string&, const OARouterModelsResult&, int);
+inline void enc_oa_router_hosts_result(std::string&, const OARouterHostsResult&, int);
+inline void enc_oa_router_pick_result(std::string&, const OARouterPickResult&, int);
 
-inline void enc_hostallowance(std::string& out, const HostAllowance& v, int depth) {
+inline void enc_host_allowance(std::string& out, const HostAllowance& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -293,7 +381,7 @@ inline void enc_hostallowance(std::string& out, const HostAllowance& v, int dept
     out += '}';
 }
 
-inline void enc_pickrequest(std::string& out, const PickRequest& v, int depth) {
+inline void enc_pick_request(std::string& out, const PickRequest& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -312,7 +400,15 @@ inline void enc_pickrequest(std::string& out, const PickRequest& v, int depth) {
         pad(out, depth + 1);
         esc(out, "allowed");
         out += ": ";
-        enc_hostallowance(out, *v.allowed, depth + 1);
+        enc_host_allowance(out, *v.allowed, depth + 1);
+    }
+    if (!v.profile.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "profile");
+        out += ": ";
+        esc(out, v.profile);
     }
     out += '\n';
     pad(out, depth);
@@ -386,6 +482,22 @@ inline void enc_alias(std::string& out, const Alias& v, int depth) {
     esc(out, "servable");
     out += ": ";
     out += v.servable ? "true" : "false";
+    if (v.hosted) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "hosted");
+        out += ": ";
+        out += v.hosted ? "true" : "false";
+    }
+    if (!v.profiles.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "profiles");
+        out += ": ";
+        strs(out, v.profiles, depth + 1);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -409,7 +521,7 @@ inline void enc_family(std::string& out, const Family& v, int depth) {
     out += '}';
 }
 
-inline void enc_modelssnapshot(std::string& out, const ModelsSnapshot& v, int depth) {
+inline void enc_models_snapshot(std::string& out, const ModelsSnapshot& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -427,7 +539,7 @@ inline void enc_modelssnapshot(std::string& out, const ModelsSnapshot& v, int de
     out += '}';
 }
 
-inline void enc_hoststate(std::string& out, const HostState& v, int depth) {
+inline void enc_host_state(std::string& out, const HostState& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -470,6 +582,54 @@ inline void enc_hoststate(std::string& out, const HostState& v, int depth) {
     esc(out, "servable");
     out += ": ";
     out += v.servable ? "true" : "false";
+    if (v.hosted) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "hosted");
+        out += ": ";
+        out += v.hosted ? "true" : "false";
+    }
+    if (!v.wire.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "wire");
+        out += ": ";
+        esc(out, v.wire);
+    }
+    if (!v.credential.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "credential");
+        out += ": ";
+        esc(out, v.credential);
+    }
+    if (!v.declared_by.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "declared_by");
+        out += ": ";
+        esc(out, v.declared_by);
+    }
+    if (!v.profiles.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "profiles");
+        out += ": ";
+        strs(out, v.profiles, depth + 1);
+    }
+    if (!v.domain.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "domain");
+        out += ": ";
+        esc(out, v.domain);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -523,7 +683,7 @@ inline void enc_ask(std::string& out, const Ask& v, int depth) {
     out += '}';
 }
 
-inline void enc_hostssnapshot(std::string& out, const HostsSnapshot& v, int depth) {
+inline void enc_hosts_snapshot(std::string& out, const HostsSnapshot& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -535,7 +695,7 @@ inline void enc_hostssnapshot(std::string& out, const HostsSnapshot& v, int dept
     pad(out, depth + 1);
     esc(out, "hosts");
     out += ": ";
-    enc_list<HostState>(out, v.hosts, depth + 1, enc_hoststate);
+    enc_list<HostState>(out, v.hosts, depth + 1, enc_host_state);
     out += ',';
     out += '\n';
     pad(out, depth + 1);
@@ -602,7 +762,7 @@ inline void enc_decision(std::string& out, const Decision& v, int depth) {
         pad(out, depth + 1);
         esc(out, "authorised");
         out += ": ";
-        enc_hostallowance(out, *v.authorised, depth + 1);
+        enc_host_allowance(out, *v.authorised, depth + 1);
     }
     out += ',';
     out += '\n';
@@ -627,7 +787,7 @@ inline void enc_decision(std::string& out, const Decision& v, int depth) {
     out += '}';
 }
 
-inline void enc_pickresult(std::string& out, const PickResult& v, int depth) {
+inline void enc_pick_result(std::string& out, const PickResult& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -645,7 +805,7 @@ inline void enc_pickresult(std::string& out, const PickResult& v, int depth) {
     out += '}';
 }
 
-inline void enc_oaroutermodelsarguments(std::string& out, const OARouterModelsArguments& v, int depth) {
+inline void enc_oa_router_models_arguments(std::string& out, const OARouterModelsArguments& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -657,7 +817,7 @@ inline void enc_oaroutermodelsarguments(std::string& out, const OARouterModelsAr
     out += '}';
 }
 
-inline void enc_oarouterhostsarguments(std::string& out, const OARouterHostsArguments& v, int depth) {
+inline void enc_oa_router_hosts_arguments(std::string& out, const OARouterHostsArguments& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -669,19 +829,19 @@ inline void enc_oarouterhostsarguments(std::string& out, const OARouterHostsArgu
     out += '}';
 }
 
-inline void enc_oarouterpickarguments(std::string& out, const OARouterPickArguments& v, int depth) {
+inline void enc_oa_router_pick_arguments(std::string& out, const OARouterPickArguments& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
     esc(out, "request");
     out += ": ";
-    enc_pickrequest(out, v.request, depth + 1);
+    enc_pick_request(out, v.request, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
 }
 
-inline void enc_oaserviceframe(std::string& out, const OAServiceFrame& v, int depth) {
+inline void enc_oa_service_frame(std::string& out, const OAServiceFrame& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -711,7 +871,7 @@ inline void enc_oaserviceframe(std::string& out, const OAServiceFrame& v, int de
     out += '}';
 }
 
-inline void enc_oaservicereply(std::string& out, const OAServiceReply& v, int depth) {
+inline void enc_oa_service_reply(std::string& out, const OAServiceReply& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -747,7 +907,7 @@ inline void enc_oaservicereply(std::string& out, const OAServiceReply& v, int de
     out += '}';
 }
 
-inline void enc_oaserviceerror(std::string& out, const OAServiceError& v, int depth) {
+inline void enc_oa_service_error(std::string& out, const OAServiceError& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -765,61 +925,44 @@ inline void enc_oaserviceerror(std::string& out, const OAServiceError& v, int de
     out += '}';
 }
 
-inline void enc_oaroutermodelsresult(std::string& out, const OARouterModelsResult& v, int depth) {
+inline void enc_oa_router_models_result(std::string& out, const OARouterModelsResult& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
     esc(out, "value");
     out += ": ";
-    enc_modelssnapshot(out, v.value, depth + 1);
+    enc_models_snapshot(out, v.value, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
 }
 
-inline void enc_oarouterhostsresult(std::string& out, const OARouterHostsResult& v, int depth) {
+inline void enc_oa_router_hosts_result(std::string& out, const OARouterHostsResult& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
     esc(out, "value");
     out += ": ";
-    enc_hostssnapshot(out, v.value, depth + 1);
+    enc_hosts_snapshot(out, v.value, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
 }
 
-inline void enc_oarouterpickresult(std::string& out, const OARouterPickResult& v, int depth) {
+inline void enc_oa_router_pick_result(std::string& out, const OARouterPickResult& v, int depth) {
     out += '{';
     out += '\n';
     pad(out, depth + 1);
     esc(out, "value");
     out += ": ";
-    enc_pickresult(out, v.value, depth + 1);
+    enc_pick_result(out, v.value, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
-}
-
-inline std::string encode(const PickRequest& v) {
-    std::string out;
-    enc_pickrequest(out, v, 0);
-    out += '\n';
-    return out;
 }
 
 inline constexpr int kDepthLimit = 64;
 inline constexpr std::size_t kI64Digits = 19;
-
-class Refusal : public std::runtime_error {
-public:
-    Refusal(const char* word, std::size_t offset)
-        : std::runtime_error(std::string("refused: ") + word + " at byte " + std::to_string(offset)),
-          word(word),
-          offset(offset) {}
-    const char* word;
-    std::size_t offset;
-};
 
 inline void append_rune(std::string& out, std::uint32_t cp) {
     if (cp < 0x80) {
@@ -1219,29 +1362,29 @@ inline std::string write_timestamp(std::string_view s) {
     return result;
 }
 
-inline HostAllowance decode_hostallowance(Reader& r);
-inline PickRequest decode_pickrequest(Reader& r);
+inline HostAllowance decode_host_allowance(Reader& r);
+inline PickRequest decode_pick_request(Reader& r);
 inline Caller decode_caller(Reader& r);
 inline Observation decode_observation(Reader& r);
 inline Alias decode_alias(Reader& r);
 inline Family decode_family(Reader& r);
-inline ModelsSnapshot decode_modelssnapshot(Reader& r);
-inline HostState decode_hoststate(Reader& r);
+inline ModelsSnapshot decode_models_snapshot(Reader& r);
+inline HostState decode_host_state(Reader& r);
 inline Ask decode_ask(Reader& r);
-inline HostsSnapshot decode_hostssnapshot(Reader& r);
+inline HostsSnapshot decode_hosts_snapshot(Reader& r);
 inline Decision decode_decision(Reader& r);
-inline PickResult decode_pickresult(Reader& r);
-inline OARouterModelsArguments decode_oaroutermodelsarguments(Reader& r);
-inline OARouterHostsArguments decode_oarouterhostsarguments(Reader& r);
-inline OARouterPickArguments decode_oarouterpickarguments(Reader& r);
-inline OAServiceFrame decode_oaserviceframe(Reader& r);
-inline OAServiceReply decode_oaservicereply(Reader& r);
-inline OAServiceError decode_oaserviceerror(Reader& r);
-inline OARouterModelsResult decode_oaroutermodelsresult(Reader& r);
-inline OARouterHostsResult decode_oarouterhostsresult(Reader& r);
-inline OARouterPickResult decode_oarouterpickresult(Reader& r);
+inline PickResult decode_pick_result(Reader& r);
+inline OARouterModelsArguments decode_oa_router_models_arguments(Reader& r);
+inline OARouterHostsArguments decode_oa_router_hosts_arguments(Reader& r);
+inline OARouterPickArguments decode_oa_router_pick_arguments(Reader& r);
+inline OAServiceFrame decode_oa_service_frame(Reader& r);
+inline OAServiceReply decode_oa_service_reply(Reader& r);
+inline OAServiceError decode_oa_service_error(Reader& r);
+inline OARouterModelsResult decode_oa_router_models_result(Reader& r);
+inline OARouterHostsResult decode_oa_router_hosts_result(Reader& r);
+inline OARouterPickResult decode_oa_router_pick_result(Reader& r);
 
-inline HostAllowance decode_hostallowance(Reader& r) {
+inline HostAllowance decode_host_allowance(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1276,7 +1419,7 @@ inline HostAllowance decode_hostallowance(Reader& r) {
     return v;
 }
 
-inline PickRequest decode_pickrequest(Reader& r) {
+inline PickRequest decode_pick_request(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1303,7 +1446,11 @@ inline PickRequest decode_pickrequest(Reader& r) {
             } else if (key == "allowed") {
                 if (seen & 4u) r.refuse("duplicate_field");
                 seen |= 4u;
-                v.allowed = decode_hostallowance(r);
+                v.allowed = decode_host_allowance(r);
+            } else if (key == "profile") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.profile = r.str();
             } else {
                 r.refuse("unknown_field");
             }
@@ -1433,6 +1580,14 @@ inline Alias decode_alias(Reader& r) {
                 if (seen & 8u) r.refuse("duplicate_field");
                 seen |= 8u;
                 v.servable = r.boolean();
+            } else if (key == "hosted") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.hosted = r.boolean();
+            } else if (key == "profiles") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.profiles = r.str_list();
             } else {
                 r.skip_value();
             }
@@ -1487,7 +1642,7 @@ inline Family decode_family(Reader& r) {
     return v;
 }
 
-inline ModelsSnapshot decode_modelssnapshot(Reader& r) {
+inline ModelsSnapshot decode_models_snapshot(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1526,7 +1681,7 @@ inline ModelsSnapshot decode_modelssnapshot(Reader& r) {
     return v;
 }
 
-inline HostState decode_hoststate(Reader& r) {
+inline HostState decode_host_state(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1570,6 +1725,30 @@ inline HostState decode_hoststate(Reader& r) {
                 if (seen & 64u) r.refuse("duplicate_field");
                 seen |= 64u;
                 v.servable = r.boolean();
+            } else if (key == "hosted") {
+                if (seen & 128u) r.refuse("duplicate_field");
+                seen |= 128u;
+                v.hosted = r.boolean();
+            } else if (key == "wire") {
+                if (seen & 256u) r.refuse("duplicate_field");
+                seen |= 256u;
+                v.wire = r.str();
+            } else if (key == "credential") {
+                if (seen & 512u) r.refuse("duplicate_field");
+                seen |= 512u;
+                v.credential = r.str();
+            } else if (key == "declared_by") {
+                if (seen & 1024u) r.refuse("duplicate_field");
+                seen |= 1024u;
+                v.declared_by = r.str();
+            } else if (key == "profiles") {
+                if (seen & 2048u) r.refuse("duplicate_field");
+                seen |= 2048u;
+                v.profiles = r.str_list();
+            } else if (key == "domain") {
+                if (seen & 4096u) r.refuse("duplicate_field");
+                seen |= 4096u;
+                v.domain = r.str();
             } else {
                 r.skip_value();
             }
@@ -1644,7 +1823,7 @@ inline Ask decode_ask(Reader& r) {
     return v;
 }
 
-inline HostsSnapshot decode_hostssnapshot(Reader& r) {
+inline HostsSnapshot decode_hosts_snapshot(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1667,7 +1846,7 @@ inline HostsSnapshot decode_hostssnapshot(Reader& r) {
             } else if (key == "hosts") {
                 if (seen & 2u) r.refuse("duplicate_field");
                 seen |= 2u;
-                v.hosts = decode_list<HostState>(r, decode_hoststate);
+                v.hosts = decode_list<HostState>(r, decode_host_state);
             } else if (key == "doubled") {
                 if (seen & 4u) r.refuse("duplicate_field");
                 seen |= 4u;
@@ -1738,7 +1917,7 @@ inline Decision decode_decision(Reader& r) {
             } else if (key == "authorised") {
                 if (seen & 128u) r.refuse("duplicate_field");
                 seen |= 128u;
-                v.authorised = decode_hostallowance(r);
+                v.authorised = decode_host_allowance(r);
             } else if (key == "withheld") {
                 if (seen & 256u) r.refuse("duplicate_field");
                 seen |= 256u;
@@ -1766,7 +1945,7 @@ inline Decision decode_decision(Reader& r) {
     return v;
 }
 
-inline PickResult decode_pickresult(Reader& r) {
+inline PickResult decode_pick_result(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1805,7 +1984,7 @@ inline PickResult decode_pickresult(Reader& r) {
     return v;
 }
 
-inline OARouterModelsArguments decode_oaroutermodelsarguments(Reader& r) {
+inline OARouterModelsArguments decode_oa_router_models_arguments(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1840,7 +2019,7 @@ inline OARouterModelsArguments decode_oaroutermodelsarguments(Reader& r) {
     return v;
 }
 
-inline OARouterHostsArguments decode_oarouterhostsarguments(Reader& r) {
+inline OARouterHostsArguments decode_oa_router_hosts_arguments(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1875,7 +2054,7 @@ inline OARouterHostsArguments decode_oarouterhostsarguments(Reader& r) {
     return v;
 }
 
-inline OARouterPickArguments decode_oarouterpickarguments(Reader& r) {
+inline OARouterPickArguments decode_oa_router_pick_arguments(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1894,7 +2073,7 @@ inline OARouterPickArguments decode_oarouterpickarguments(Reader& r) {
             if (key == "request") {
                 if (seen & 1u) r.refuse("duplicate_field");
                 seen |= 1u;
-                v.request = decode_pickrequest(r);
+                v.request = decode_pick_request(r);
             } else {
                 r.refuse("unknown_field");
             }
@@ -1910,7 +2089,7 @@ inline OARouterPickArguments decode_oarouterpickarguments(Reader& r) {
     return v;
 }
 
-inline OAServiceFrame decode_oaserviceframe(Reader& r) {
+inline OAServiceFrame decode_oa_service_frame(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -1957,7 +2136,7 @@ inline OAServiceFrame decode_oaserviceframe(Reader& r) {
     return v;
 }
 
-inline OAServiceReply decode_oaservicereply(Reader& r) {
+inline OAServiceReply decode_oa_service_reply(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -2008,7 +2187,7 @@ inline OAServiceReply decode_oaservicereply(Reader& r) {
     return v;
 }
 
-inline OAServiceError decode_oaserviceerror(Reader& r) {
+inline OAServiceError decode_oa_service_error(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -2047,7 +2226,7 @@ inline OAServiceError decode_oaserviceerror(Reader& r) {
     return v;
 }
 
-inline OARouterModelsResult decode_oaroutermodelsresult(Reader& r) {
+inline OARouterModelsResult decode_oa_router_models_result(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -2066,7 +2245,7 @@ inline OARouterModelsResult decode_oaroutermodelsresult(Reader& r) {
             if (key == "value") {
                 if (seen & 1u) r.refuse("duplicate_field");
                 seen |= 1u;
-                v.value = decode_modelssnapshot(r);
+                v.value = decode_models_snapshot(r);
             } else {
                 r.refuse("unknown_field");
             }
@@ -2082,7 +2261,7 @@ inline OARouterModelsResult decode_oaroutermodelsresult(Reader& r) {
     return v;
 }
 
-inline OARouterHostsResult decode_oarouterhostsresult(Reader& r) {
+inline OARouterHostsResult decode_oa_router_hosts_result(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -2101,7 +2280,7 @@ inline OARouterHostsResult decode_oarouterhostsresult(Reader& r) {
             if (key == "value") {
                 if (seen & 1u) r.refuse("duplicate_field");
                 seen |= 1u;
-                v.value = decode_hostssnapshot(r);
+                v.value = decode_hosts_snapshot(r);
             } else {
                 r.refuse("unknown_field");
             }
@@ -2117,7 +2296,7 @@ inline OARouterHostsResult decode_oarouterhostsresult(Reader& r) {
     return v;
 }
 
-inline OARouterPickResult decode_oarouterpickresult(Reader& r) {
+inline OARouterPickResult decode_oa_router_pick_result(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
@@ -2136,7 +2315,7 @@ inline OARouterPickResult decode_oarouterpickresult(Reader& r) {
             if (key == "value") {
                 if (seen & 1u) r.refuse("duplicate_field");
                 seen |= 1u;
-                v.value = decode_pickresult(r);
+                v.value = decode_pick_result(r);
             } else {
                 r.refuse("unknown_field");
             }
@@ -2152,15 +2331,25 @@ inline OARouterPickResult decode_oarouterpickresult(Reader& r) {
     return v;
 }
 
+}  // namespace detail
+
+inline std::string encode(const PickRequest& v) {
+    std::string out;
+    detail::enc_pick_request(out, v, 0);
+    out += '\n';
+    return out;
+}
+
 inline PickRequest decode(std::string_view data) {
-    Reader r{data};
+    detail::Reader r{data};
     r.skip_ws();
-    PickRequest v = decode_pickrequest(r);
+    PickRequest v = detail::decode_pick_request(r);
     r.skip_ws();
     if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
     return v;
 }
 
+namespace detail {
 // kRefusals is in the order two of them are chosen between.
 inline const std::vector<std::string> kRefusals = {"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"};
 
@@ -2169,50 +2358,90 @@ inline int refusal_rank(std::string_view word) {
         if (kRefusals[i] == word) return static_cast<int>(i);
     return -1;
 }
+}  // namespace detail
 
-struct FrameWriter{virtual ~FrameWriter()=default;virtual void WriteFrame(std::string_view)=0;};
+struct FrameWriter{virtual ~FrameWriter()=default;virtual void write_frame(std::string_view frame)=0;};
 struct DispatchError:std::runtime_error{using std::runtime_error::runtime_error;};
-inline OAServiceFrame service_payload(std::string_view frame){Reader r{frame};r.skip_ws();auto v=decode_oaserviceframe(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");if(v.version!=1)throw DispatchError("unknown_version");return v;}
+namespace detail {
+inline OAServiceFrame service_payload(std::string_view frame){Reader r{frame};r.skip_ws();auto v=decode_oa_service_frame(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");if(v.version!=1)throw DispatchError("unknown_version");return v;}
+}  // namespace detail
 
-struct FrameExchanger{virtual ~FrameExchanger()=default;virtual std::string ExchangeFrame(std::string_view)=0;};
+struct FrameExchanger{virtual ~FrameExchanger()=default;virtual std::string exchange_frame(std::string_view frame)=0;};
 struct ServiceError:std::runtime_error{std::string code,message;ServiceError(std::string c,std::string m):std::runtime_error(m.empty()?c:m),code(c),message(m){}};
+namespace detail {
 inline Raw service_response(std::string_view frame,std::string_view service,std::string_view method){
- Reader r{frame};r.skip_ws();auto v=decode_oaservicereply(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");if(v.version!=1)throw DispatchError("unknown_version");if(v.service!=service||v.method!=method)throw DispatchError("mismatched_response");
- if(!v.ok){Reader e{v.payload};e.depth=1;e.skip_ws();auto error=decode_oaserviceerror(e);e.skip_ws();if(e.pos!=e.buf.size())e.refuse("trailing_bytes");if(error.code.empty())throw DispatchError("invalid_error");throw ServiceError(error.code,error.message);}return v.payload;
+ Reader r{frame};r.skip_ws();auto v=decode_oa_service_reply(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");if(v.version!=1)throw DispatchError("unknown_version");if(v.service!=service||v.method!=method)throw DispatchError("mismatched_response");
+ if(!v.ok){Reader e{v.payload};e.depth=1;e.skip_ws();auto error=decode_oa_service_error(e);e.skip_ws();if(e.pos!=e.buf.size())e.refuse("trailing_bytes");if(error.code.empty())throw DispatchError("invalid_error");throw ServiceError(error.code,error.message);}return v.payload;
 }
 inline std::string service_reply(const OAServiceFrame& request,const Raw& payload,const ServiceError* error=nullptr){
  OAServiceReply reply;reply.version=1;reply.service=request.service;reply.method=request.method;reply.ok=error==nullptr;reply.payload=payload;
- if(error){OAServiceError e;e.code=error->code.empty()?"handler_error":error->code;e.message=error->message;reply.payload.clear();enc_oaserviceerror(reply.payload,e,1);}
- std::string frame;enc_oaservicereply(frame,reply,0);Reader r{frame};r.skip_ws();decode_oaservicereply(r);return frame;
+ if(error){OAServiceError e;e.code=error->code.empty()?"handler_error":error->code;e.message=error->message;reply.payload.clear();enc_oa_service_error(reply.payload,e,1);}
+ std::string frame;enc_oa_service_reply(frame,reply,0);Reader r{frame};r.skip_ws();decode_oa_service_reply(r);return frame;
+}
+}  // namespace detail
+
+// The base-protocol service every dispatcher answers beside its own.
+inline constexpr std::string_view kEndpointContract="abstraction.facade/endpoint@1";
+// One service an endpoint hosts, as a dispatcher of any generated namespace
+// reports it to describe_endpoint.
+struct DescribedService{std::string contract;bool ready;std::string why;};
+namespace detail {
+template<class H>auto ready_hook(int)->decltype((void)static_cast<H*>(nullptr)->ready(),static_cast<bool(*)(void*,std::string&)>(nullptr)){return [](void* h,std::string& why)->bool{auto r=static_cast<H*>(h)->ready();why=r.second;return r.first;};}
+template<class H>bool(*ready_hook(long))(void*,std::string&){return nullptr;}
+}  // namespace detail
+// Answers an abstraction.facade/endpoint@1 Describe frame for an endpoint
+// hosting services, in that order: each is a dispatcher of any generated
+// namespace. program and version are the provider's own display name and
+// version, never authority. A frame for another service reads unknown_service.
+template<class... Services>std::string describe_endpoint(std::string_view frame,const std::string& program,const std::string& version,const Services&... services){
+ auto v=detail::service_payload(frame);
+ if(v.service!=kEndpointContract){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
+ if(v.method!="Describe"){ServiceError e("unknown_method","");return detail::service_reply(v,"",&e);}
+ detail::Reader r{v.arguments};r.skip_ws();bool empty=false;
+ if(r.pos<r.buf.size()&&r.buf[r.pos]=='{'){r.pos++;r.skip_ws();if(r.pos<r.buf.size()&&r.buf[r.pos]=='}'){r.pos++;r.skip_ws();empty=r.pos==r.buf.size();}}
+ if(!empty){ServiceError e("unknown_field","");return detail::service_reply(v,"",&e);}
+ try{
+  Raw out="{\"value\":{\"outcome\":\"described\",\"program\":";detail::esc(out,program);out+=",\"version\":";detail::esc(out,version);out+=",\"services\":[";
+  bool first=true;
+  auto add=[&](const auto& s){if(!first)out+=',';first=false;out+="{\"contract\":";detail::esc(out,s.contract);out+=",\"readiness\":\"";out+=s.ready?"ready":"not_ready";out+="\",\"why\":";detail::esc(out,s.why);out+=",\"guarantees\":[],\"capabilities\":{}}";};
+  (void)add;
+  (add(services.describe_service()),...);
+  out+="]}}";
+  return detail::service_reply(v,out);
+ }catch(const Refusal&e){ServiceError error(e.word,"");return detail::service_reply(v,"",&error);}
 }
 struct Router{virtual ~Router()=default;
-virtual ModelsSnapshot Models(const bool& arg0)=0;
-virtual HostsSnapshot Hosts(const bool& arg0)=0;
-virtual PickResult Pick(const PickRequest& arg0)=0;
+virtual ModelsSnapshot models(const bool& fresh)=0;
+virtual HostsSnapshot hosts(const bool& fresh)=0;
+virtual PickResult pick(const PickRequest& request)=0;
 };
 template<class Transport>struct RouterClient:Router{Transport& transport_;explicit RouterClient(Transport&t):transport_(t){}
-ModelsSnapshot Models(const bool& arg0)override{OARouterModelsArguments args;
-args.fresh=arg0;
-OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Models";enc_oaroutermodelsarguments(v.arguments,args,1);std::string frame;enc_oaserviceframe(frame,v,0);service_payload(frame);
-auto response=transport_.ExchangeFrame(frame);auto payload=service_response(response,v.service,v.method);Reader r{payload};r.depth=1;r.skip_ws();auto result=decode_oaroutermodelsresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+ModelsSnapshot models(const bool& fresh)override{detail::OARouterModelsArguments args;
+args.fresh=fresh;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Models";detail::enc_oa_router_models_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_models_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
 return result.value;
 }
-HostsSnapshot Hosts(const bool& arg0)override{OARouterHostsArguments args;
-args.fresh=arg0;
-OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Hosts";enc_oarouterhostsarguments(v.arguments,args,1);std::string frame;enc_oaserviceframe(frame,v,0);service_payload(frame);
-auto response=transport_.ExchangeFrame(frame);auto payload=service_response(response,v.service,v.method);Reader r{payload};r.depth=1;r.skip_ws();auto result=decode_oarouterhostsresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+HostsSnapshot hosts(const bool& fresh)override{detail::OARouterHostsArguments args;
+args.fresh=fresh;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Hosts";detail::enc_oa_router_hosts_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_hosts_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
 return result.value;
 }
-PickResult Pick(const PickRequest& arg0)override{OARouterPickArguments args;
-args.request=arg0;
-OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Pick";enc_oarouterpickarguments(v.arguments,args,1);std::string frame;enc_oaserviceframe(frame,v,0);service_payload(frame);
-auto response=transport_.ExchangeFrame(frame);auto payload=service_response(response,v.service,v.method);Reader r{payload};r.depth=1;r.skip_ws();auto result=decode_oarouterpickresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+PickResult pick(const PickRequest& request)override{detail::OARouterPickArguments args;
+args.request=request;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Pick";detail::enc_oa_router_pick_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_pick_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
 return result.value;
 }
 };
-struct RouterService{inline static constexpr std::string_view wire_name="abstraction.router/router@1";inline static constexpr std::string_view capability="abstraction.router";template<class Transport>using Client=RouterClient<Transport>;};
+struct RouterService{inline static constexpr std::string_view kWireName="abstraction.router/router@1";inline static constexpr std::string_view kCapability="abstraction.router";template<class Transport>using Client=RouterClient<Transport>;};
 struct RouterDispatcher:FrameWriter,FrameExchanger{Router&handler;explicit RouterDispatcher(Router&h):handler(h){}
-void WriteFrame(std::string_view frame)override{auto v=service_payload(frame);if(v.service!="abstraction.router/router@1")throw DispatchError("unknown_service");
+// A handler whose own type has ready(), returning a pair of bool and std::string, reports its readiness through describe_service.
+template<class H,class=decltype(static_cast<Router&>(*static_cast<H*>(nullptr)))>explicit RouterDispatcher(H&h):handler(h),ready_self_(&h),ready_hook_(detail::ready_hook<H>(0)){}
+// This dispatcher's service as abstraction.facade/endpoint@1 Describe lists it.
+DescribedService describe_service()const{DescribedService s{"abstraction.router/router@1",true,std::string()};if(ready_hook_){s.ready=ready_hook_(ready_self_,s.why);if(s.ready)s.why.clear();}return s;}
+void write_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service!="abstraction.router/router@1")throw DispatchError("unknown_service");
 if(v.method=="Models"){
 throw DispatchError("wrong_mode");}
 if(v.method=="Hosts"){
@@ -2220,49 +2449,53 @@ throw DispatchError("wrong_mode");}
 if(v.method=="Pick"){
 throw DispatchError("wrong_mode");}
 throw DispatchError("unknown_method");}
-std::string ExchangeFrame(std::string_view frame)override{auto v=service_payload(frame);if(v.service!="abstraction.router/router@1"){ServiceError e("unknown_service","");return service_reply(v,"",&e);}
+std::string exchange_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service==kEndpointContract)return describe_endpoint(frame,std::string(),std::string(),*this);if(v.service!="abstraction.router/router@1"){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
 try{
 if(v.method=="Models"){
-Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=decode_oaroutermodelsarguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_Models(args);return service_reply(v,payload);}
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_models_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_models(args);return detail::service_reply(v,payload);}
 if(v.method=="Hosts"){
-Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=decode_oarouterhostsarguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_Hosts(args);return service_reply(v,payload);}
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_hosts_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_hosts(args);return detail::service_reply(v,payload);}
 if(v.method=="Pick"){
-Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=decode_oarouterpickarguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_Pick(args);return service_reply(v,payload);}
-throw ServiceError("unknown_method","");}catch(const ServiceError&e){return service_reply(v,"",&e);}catch(const Refusal&e){ServiceError error(e.word,"");return service_reply(v,"",&error);}
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_pick_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_pick(args);return detail::service_reply(v,payload);}
+throw ServiceError("unknown_method","");}catch(const ServiceError&e){return detail::service_reply(v,"",&e);}catch(const Refusal&e){ServiceError error(e.word,"");return detail::service_reply(v,"",&error);}
 }
-Raw invoke_Models(const OARouterModelsArguments&args){
+private:
+Raw invoke_models(const detail::OARouterModelsArguments&args){
 ModelsSnapshot result{};
 try{
-result=handler.Models(args.fresh);
+result=handler.models(args.fresh);
 }catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
 try{
-OARouterModelsResult value;
+detail::OARouterModelsResult value;
 value.value=result;
-Raw payload;enc_oaroutermodelsresult(payload,value,1);Reader r{payload};r.depth=1;r.skip_ws();decode_oaroutermodelsresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+Raw payload;detail::enc_oa_router_models_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_models_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
 }catch(...){throw ServiceError("invalid_result","");}
 }
-Raw invoke_Hosts(const OARouterHostsArguments&args){
+Raw invoke_hosts(const detail::OARouterHostsArguments&args){
 HostsSnapshot result{};
 try{
-result=handler.Hosts(args.fresh);
+result=handler.hosts(args.fresh);
 }catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
 try{
-OARouterHostsResult value;
+detail::OARouterHostsResult value;
 value.value=result;
-Raw payload;enc_oarouterhostsresult(payload,value,1);Reader r{payload};r.depth=1;r.skip_ws();decode_oarouterhostsresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+Raw payload;detail::enc_oa_router_hosts_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_hosts_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
 }catch(...){throw ServiceError("invalid_result","");}
 }
-Raw invoke_Pick(const OARouterPickArguments&args){
+Raw invoke_pick(const detail::OARouterPickArguments&args){
 PickResult result{};
 try{
-result=handler.Pick(args.request);
+result=handler.pick(args.request);
 }catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
 try{
-OARouterPickResult value;
+detail::OARouterPickResult value;
 value.value=result;
-Raw payload;enc_oarouterpickresult(payload,value,1);Reader r{payload};r.depth=1;r.skip_ws();decode_oarouterpickresult(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+Raw payload;detail::enc_oa_router_pick_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_pick_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
 }catch(...){throw ServiceError("invalid_result","");}
 }
+private:
+void* ready_self_=nullptr;
+bool(*ready_hook_)(void*,std::string&)=nullptr;
 };
 
 }  // namespace abstraction::router

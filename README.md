@@ -1,14 +1,18 @@
-# router — which host should serve this model
+# abstraction-router
 
-Three questions about the model runtimes already on a machine, and nothing else.
+See which models this computer can serve, where they are already loaded and
+which allowed host best fits one request. The router reports the choice and its
+cost or loading consequence. The inference service performs the model call and
+keeps provider addresses and credentials away from the application.
 
     what models exist here, under every name they are known by
     which host currently holds which, and what that costs
     given a request, which host should serve it
 
-It hosts no model, ships no chat client, and renders no interface. It never
-loads, unloads or evicts: a verdict of `would-load` names the host to ask and
-leaves the asking to the caller.
+Applications resolve `abstraction.router/router@1` through the facade. `Models`,
+`Hosts` and `Pick` return bounded typed results. Inventory and route selection
+have separate rights. A `would-load` verdict names a candidate host; the router
+does not load, unload or evict a model.
 
 Measured on the machine it was written for: consolidating three models into one
 host saved 0.30 GB of 42.87 and turned one failed load from a 33% loss into a
@@ -57,6 +61,32 @@ window remain legacy surfaces.** The old `router` host/CLI continues to use its
 original endpoint. This is not a claim of full router conformance, all-platform
 validation or a published release. The new service reuses the existing provider
 and therefore still never loads or unloads a model.
+
+## Hosted hosts
+
+A hosted host is a provider endpoint off this machine, such as OpenRouter or a
+LiteLLM instance on the LAN. Its entry names a base URL, a wire kind
+(`openai-compatible`, `anthropic-messages`, or `<owner>/<name>@<n>` from the
+open `wire_kinds` catalogue) and a credential name. The service reads its model
+listing with the credential applied through `abstraction.credentials/applier@1`,
+as consumer `abstraction.router/router@1`, once per listing request.
+
+- `Hosts` reports `hosted: true`, the wire and the credential name. No snapshot
+  carries a header value.
+- A listing the applier refuses reads `up: false` with
+  `why: credential:<outcome>:<name>`, for example `credential:unknown:openrouter`.
+- `Models` marks hosted aliases `hosted: true`, folded into families beside
+  local names.
+- `Pick` answers `hosted` after every `resident` and `would-load` host on this
+  machine, unless the allowance names only hosted hosts. The decision's
+  `endpoint` is empty: `abstraction-inference` performs the call, and no
+  endpoint or key reaches the caller.
+
+```go
+r := router.New(append(router.Installed(),
+	router.NewHosted("openrouter", "https://openrouter.ai/api/v1", router.WireOpenAICompatible, "openrouter"))...)
+r.UseCredentials(apply) // the runtime's in-process applier
+```
 
 ## Install
 

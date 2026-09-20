@@ -13,7 +13,8 @@
     "url": "https://github.com/openabstractions/abstraction-router/issues"
   },
   "type": "module",
-  "exports": "./js/abstraction/router/rec.mjs",
+  "types": "./js/abstraction/router/index.d.mts",
+  "exports": {".": {"types": "./js/abstraction/router/index.d.mts", "default": "./js/abstraction/router/index.mjs"}},
   "files": [
     "js"
   ],

@@ -40,8 +40,11 @@ const (
 	// ActionInventory covers Models and Hosts; its resource is ResourceInventory.
 	ActionInventory   = "abstraction.router/inventory.read"
 	ResourceInventory = "abstraction.router/inventory"
-	// ActionRoute covers Pick; its resource is the requested model.
-	ActionRoute = "abstraction.router/route"
+	// ActionRoute covers Pick; its resource is ResourceRoutes for every model
+	// (research/rights-defaults/DECISION.md §1). The per-host switch is
+	// inference complete on host:<name>.
+	ActionRoute    = "abstraction.router/route"
+	ResourceRoutes = "abstraction.router/routes"
 )
 
 // Policy authorizes one router operation for the rechecked bound caller. It
@@ -123,7 +126,7 @@ func (h *Host) Serve(ctx context.Context) error {
 				defer call.Close()
 			}
 			if err == nil {
-				dispatch := wire.RouterDispatcher{Handler: &receiver{provider: h.router, call: call, policy: policy, ctx: requestCtx}}
+				dispatch := wire.RouterDispatcher{Handler: (&receiver{provider: h.router, call: call, policy: policy, ctx: requestCtx}).views()}
 				var response []byte
 				response, err = dispatch.ExchangeFrame(call.Frame)
 				if err == nil {
@@ -177,7 +180,7 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 	}
 	action, resource := ActionInventory, ResourceInventory
 	if request.Op == router.OpRoute {
-		action, resource = ActionRoute, request.Model
+		action, resource = ActionRoute, ResourceRoutes
 	}
 	if err := r.authorize(action, resource); err != nil {
 		return router.Response{}, err
@@ -189,15 +192,15 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 		if code == "" {
 			code = router.CodeInternal
 		}
-		return out, &wire.ServiceError{Code: code, Message: out.Error}
+		return out, &wire.ServiceError{Code: wire.ServiceErrorCode(code), Message: out.Error}
 	}
 	return out, nil
 }
 func observation(r router.Response) wire.Observation {
 	return wire.Observation{Caller: wire.Caller{UserDescription: r.Caller.User, PathDescription: r.Caller.Path}, TookMs: r.TookMS, CacheAgeMs: r.AgeMS}
 }
-func (r *receiver) Models(fresh bool) (wire.ModelsSnapshot, error) {
-	out, err := r.answer(router.Request{Op: router.OpModels, Fresh: fresh})
+func (answer answerFunc) Models(fresh bool) (wire.ModelsSnapshot, error) {
+	out, err := answer(router.Request{Op: router.OpModels, Fresh: fresh})
 	if err != nil {
 		return wire.ModelsSnapshot{}, err
 	}
@@ -205,33 +208,33 @@ func (r *receiver) Models(fresh bool) (wire.ModelsSnapshot, error) {
 	for _, f := range out.Models {
 		family := wire.Family{Family: f.Family}
 		for _, a := range f.Names {
-			family.Names = append(family.Names, wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable})
+			family.Names = append(family.Names, wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles})
 		}
 		value.Models = append(value.Models, family)
 	}
 	return value, nil
 }
-func (r *receiver) Hosts(fresh bool) (wire.HostsSnapshot, error) {
-	out, err := r.answer(router.Request{Op: router.OpResidency, Fresh: fresh})
+func (answer answerFunc) Hosts(fresh bool) (wire.HostsSnapshot, error) {
+	out, err := answer(router.Request{Op: router.OpResidency, Fresh: fresh})
 	if err != nil {
 		return wire.HostsSnapshot{}, err
 	}
 	value := wire.HostsSnapshot{Observation: observation(out), Doubled: out.Doubled}
 	for _, h := range out.Hosts {
-		value.Hosts = append(value.Hosts, wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable})
+		value.Hosts = append(value.Hosts, wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable, Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy, Profiles: h.Profiles, Domain: h.Domain})
 	}
 	for _, a := range out.Asked {
 		value.Asked = append(value.Asked, wire.Ask{At: a.At.UTC().Format("2006-01-02T15:04:05.000000Z"), Caller: a.Caller, User: a.User, Model: a.Model, Family: a.Family, Verdict: a.Verdict, Host: a.Host})
 	}
 	return value, nil
 }
-func (r *receiver) Pick(request wire.PickRequest) (wire.PickResult, error) {
-	input := router.Request{Op: router.OpRoute, Model: request.Model, Fresh: request.Fresh}
+func (answer answerFunc) Pick(request wire.PickRequest) (wire.PickResult, error) {
+	input := router.Request{Op: router.OpRoute, Model: request.Model, Fresh: request.Fresh, Profile: request.Profile}
 	if request.Allowed != nil {
 		hosts := append([]string{}, request.Allowed.Hosts...)
 		input.Hosts = &hosts
 	}
-	out, err := r.answer(input)
+	out, err := answer(input)
 	if err != nil {
 		return wire.PickResult{}, err
 	}

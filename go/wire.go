@@ -32,6 +32,9 @@ type Request struct {
 	// authorisation as no authorisation at all, which turns a caller's hard
 	// requirement into a preference nothing observes.
 	Hosts *[]string `json:"hosts,omitempty"`
+	// Profile is what the caller asks the host to serve (profiles.go); empty is
+	// chat.
+	Profile string `json:"profile,omitempty"`
 }
 
 type Response struct {
@@ -60,16 +63,28 @@ type Alias struct {
 	Name     string `json:"name"`
 	Resident bool   `json:"resident"`
 	Servable bool   `json:"servable"`
+	Hosted   bool   `json:"hosted,omitempty"`
+	// Profiles are the profiles the host's own metadata reports for this name;
+	// empty when it reports none.
+	Profiles []string `json:"profiles,omitempty"`
 }
 
+// HostState names a hosted host's wire and credential name; it never carries a
+// header value.
 type HostState struct {
-	Host      string   `json:"host"`
-	Base      string   `json:"base"`
-	Up        bool     `json:"up"`
-	Why       string   `json:"why,omitempty"`
-	Installed int      `json:"installed"`
-	Resident  []string `json:"resident,omitempty"`
-	Servable  bool     `json:"servable"`
+	Host       string   `json:"host"`
+	Base       string   `json:"base"`
+	Up         bool     `json:"up"`
+	Why        string   `json:"why,omitempty"`
+	Installed  int      `json:"installed"`
+	Resident   []string `json:"resident,omitempty"`
+	Servable   bool     `json:"servable"`
+	Hosted     bool     `json:"hosted,omitempty"`
+	Wire       string   `json:"wire,omitempty"`
+	Credential string   `json:"credential,omitempty"`
+	DeclaredBy string   `json:"declared_by,omitempty"`
+	Profiles   []string `json:"profiles,omitempty"`
+	Domain     string   `json:"domain,omitempty"`
 }
 
 // Holder is per-process, which is as fine as this machine can attribute GPU
@@ -94,10 +109,14 @@ type Ask struct {
 const (
 	Resident     = "resident"
 	WouldLoad    = "would-load"
+	Hosted       = "hosted"
 	Unservable   = "unservable"
 	NotOnDisk    = "not-here"
 	EmptyFamily  = "unparseable"
 	Unauthorised = "unauthorised"
+	// NoHost is a request for a profile no servable host serves, or for a
+	// model its hosts hold and serve only for other profiles.
+	NoHost = "no-host"
 )
 
 type Decision struct {
