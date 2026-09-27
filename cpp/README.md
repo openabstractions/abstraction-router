@@ -45,8 +45,9 @@ C++17 and CMake 3.16 are required. `abstraction_router` depends on
 `abstraction_ipc`; CMake uses installed packages or a sibling abstraction-identity
 source checkout and never downloads missing dependencies.
 
-The current subset is Models/Hosts/Pick with residency and audit. GPU cost and
-the HTTP window remain outside it. Development examples do not claim a tagged
+The current subset is Models/Hosts/Pick with residency and audit. Who holds
+the machine's accelerator memory is `abstraction.resource/table@1`, which the
+router reads; that and the HTTP window remain outside this subset. Development examples do not claim a tagged
 release or all-platform conformance. [Schema](../router.thrift) ·
 [Capability and legacy behavior](../README.md).
 

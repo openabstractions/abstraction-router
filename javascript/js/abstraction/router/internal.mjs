@@ -137,7 +137,7 @@ export const ServiceErrorCode = Object.freeze({
   InvalidRequest: "invalid_request",
   CallerRefused: "caller_refused",
   UnknownOperation: "unknown_operation",
-  PolicyUnavailable: "policy_unavailable",
+  Unavailable: "unavailable",
   Forbidden: "forbidden",
 });
 
@@ -149,7 +149,7 @@ export const wireKinds = ["openai-compatible", "anthropic-messages", "deepgram-p
 
 export const credentialConsumers = ["abstraction.router/router@1"];
 
-export const routerErrorCodes = ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"];
+export const routerErrorCodes = ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"];
 
 function writeHostAllowance(out, v, depth) {
   out.byte(0x7b);
@@ -280,6 +280,48 @@ function writeAlias(out, v, depth) {
     out.ascii(": ");
     strs(out, v.profiles, depth + 1);
   }
+  if (v.heldIn.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "held_in");
+    out.ascii(": ");
+    strs(out, v.heldIn, depth + 1);
+  }
+  if (v.contextLength !== 0n) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "context_length");
+    out.ascii(": ");
+    num(out, v.contextLength);
+  }
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeComponent(out, v, depth) {
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "store");
+  out.ascii(": ");
+  esc(out, v.store);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "role");
+  out.ascii(": ");
+  esc(out, v.role);
+  if (v.name !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "name");
+    out.ascii(": ");
+    esc(out, v.name);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -298,6 +340,30 @@ function writeFamily(out, v, depth) {
   esc(out, "names");
   out.ascii(": ");
   writeList(out, v.names, depth + 1, writeAlias);
+  if (v.heldIn.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "held_in");
+    out.ascii(": ");
+    strs(out, v.heldIn, depth + 1);
+  }
+  if (v.familySource !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "family_source");
+    out.ascii(": ");
+    esc(out, v.familySource);
+  }
+  if (v.components.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "components");
+    out.ascii(": ");
+    writeList(out, v.components, depth + 1, writeComponent);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -1143,13 +1209,42 @@ export function newObservation() {
 // hosted is true for a name read from a hosted host's model listing; such a
 // name is never resident. profiles are what the host's own model metadata says
 // this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply.
+// host reports none, and then its HostState profiles apply. held_in names the
+// storage inventory stores holding an object this alias's own name or digest
+// matches, in store order; empty when no store's object matches this name. host
+// is empty exactly for a name no host serves, which a store holds and which is
+// never resident or servable. context_length is the model's context window in
+// tokens, read from the host's own metadata without loading it (LM Studio's
+// max_context_length, Ollama's model_info context_length, Lemonade's
+// max_context_window); zero when the host reports none.
 export function newAlias() {
-  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [] };
+  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [], heldIn: [], contextLength: 0n };
 }
 
+// One role-bearing object a store holds, folded into a family's detail rather
+// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
+// store is the holder, role is projector, vae, or another value a storage
+// inventory source's descriptor names, and name is the store's own name for the
+// object when it named one.
+export function newComponent() {
+  return { store: "", role: "", name: "" };
+}
+
+// held_in names the storage inventory stores holding an object of this family,
+// in store order, whether or not a host serves it; empty when no store reports
+// one. A family whose names are all unservable is on this machine and answered
+// by nothing. family_source is descriptor when the storage inventory published
+// an abstraction.model/descriptor@1 naming this family, and alias when no
+// descriptor names it and a program's own name for the model is the family;
+// empty when the service reports neither. components lists a projector, VAE or
+// other role-bearing object a store holds and this family's descriptor named as
+// its base, or, when no descriptor could derive a base for it, an object that
+// is this family's only content — held_in and family_source cover the family
+// it was folded into or the family it stands in for either way; components
+// exists to say the family answers for a part, not a whole model, when that is
+// what it is.
 export function newFamily() {
-  return { family: "", names: [] };
+  return { family: "", names: [], heldIn: [], familySource: "", components: [] };
 }
 
 export function newModelsSnapshot() {
@@ -1431,6 +1526,14 @@ function readAlias(r) {
         if (seen & 32) throw r.refuse("duplicate_field");
         seen |= 32;
         v.profiles = r.strList();
+      } else if (key === "held_in") {
+        if (seen & 64) throw r.refuse("duplicate_field");
+        seen |= 64;
+        v.heldIn = r.strList();
+      } else if (key === "context_length") {
+        if (seen & 128) throw r.refuse("duplicate_field");
+        seen |= 128;
+        v.contextLength = r.integer(-9223372036854775808n, 9223372036854775807n);
       } else {
         r.skipValue();
       }
@@ -1443,6 +1546,49 @@ function readAlias(r) {
   r.pos++;
   r.depth--;
   if (((seen & 15) >>> 0) !== 15) throw r.refuse("missing_field");
+  return v;
+}
+
+function readComponent(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newComponent();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "store") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.store = r.string();
+      } else if (key === "role") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.role = r.string();
+      } else if (key === "name") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.name = r.string();
+      } else {
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 3) >>> 0) !== 3) throw r.refuse("missing_field");
   return v;
 }
 
@@ -1470,6 +1616,18 @@ function readFamily(r) {
         if (seen & 2) throw r.refuse("duplicate_field");
         seen |= 2;
         v.names = readList(r, readAlias);
+      } else if (key === "held_in") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.heldIn = r.strList();
+      } else if (key === "family_source") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.familySource = r.string();
+      } else if (key === "components") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.components = readList(r, readComponent);
       } else {
         r.skipValue();
       }
@@ -2247,8 +2405,9 @@ _serviceRecords["HostAllowance"] = [["hosts","list<string>","never"],];
 _serviceRecords["PickRequest"] = [["model","string","never"],["fresh","bool","never"],["allowed","HostAllowance","absent"],["profile","string","zero"],];
 _serviceRecords["Caller"] = [["userDescription","string","never"],["pathDescription","string","never"],];
 _serviceRecords["Observation"] = [["caller","Caller","never"],["tookMs","i64","never"],["cacheAgeMs","i64","never"],];
-_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],];
-_serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],];
+_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],["heldIn","list<string>","zero"],["contextLength","i64","zero"],];
+_serviceRecords["Component"] = [["store","string","never"],["role","string","never"],["name","string","zero"],];
+_serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],["heldIn","list<string>","zero"],["familySource","string","zero"],["components","list<Component>","zero"],];
 _serviceRecords["ModelsSnapshot"] = [["observation","Observation","never"],["models","list<Family>","never"],];
 _serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],];
 _serviceRecords["Ask"] = [["at","string","never"],["caller","string","never"],["user","string","never"],["model","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],];

@@ -168,7 +168,7 @@ class ServiceErrorCode(_StrEnum):
     INVALID_REQUEST = "invalid_request"
     CALLER_REFUSED = "caller_refused"
     UNKNOWN_OPERATION = "unknown_operation"
-    POLICY_UNAVAILABLE = "policy_unavailable"
+    UNAVAILABLE = "unavailable"
     FORBIDDEN = "forbidden"
 
 
@@ -184,7 +184,7 @@ WIRE_KINDS = ["openai-compatible", "anthropic-messages", "deepgram-prerecorded",
 CREDENTIAL_CONSUMERS = ["abstraction.router/router@1"]
 
 
-ROUTER_ERROR_CODES = ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"]
+ROUTER_ERROR_CODES = ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"]
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -221,7 +221,14 @@ class Alias:
     """hosted is true for a name read from a hosted host's model listing; such a
     name is never resident. profiles are what the host's own model metadata says
     this name serves (LM Studio's type, Ollama's capabilities); empty when the
-    host reports none, and then its HostState profiles apply."""
+    host reports none, and then its HostState profiles apply. held_in names the
+    storage inventory stores holding an object this alias's own name or digest
+    matches, in store order; empty when no store's object matches this name.
+    host is empty exactly for a name no host serves, which a store holds and
+    which is never resident or servable. context_length is the model's context
+    window in tokens, read from the host's own metadata without loading it (LM
+    Studio's max_context_length, Ollama's model_info context_length, Lemonade's
+    max_context_window); zero when the host reports none."""
 
     host: str = ""
     name: str = ""
@@ -229,12 +236,44 @@ class Alias:
     servable: bool = False
     hosted: bool = False
     profiles: list[str] = dataclasses.field(default_factory=list)
+    held_in: list[str] = dataclasses.field(default_factory=list)
+    context_length: int = 0
+
+
+@dataclasses.dataclass(kw_only=True)
+class Component:
+    """One role-bearing object a store holds, folded into a family's detail rather
+    than listed as a family of its own (abstraction.model/descriptor@1
+    MODEL-C3): store is the holder, role is projector, vae, or another value a
+    storage inventory source's descriptor names, and name is the store's own
+    name for the object when it named one."""
+
+    store: str = ""
+    role: str = ""
+    name: str = ""
 
 
 @dataclasses.dataclass(kw_only=True)
 class Family:
+    """held_in names the storage inventory stores holding an object of this family,
+    in store order, whether or not a host serves it; empty when no store reports
+    one. A family whose names are all unservable is on this machine and answered
+    by nothing. family_source is descriptor when the storage inventory published
+    an abstraction.model/descriptor@1 naming this family, and alias when no
+    descriptor names it and a program's own name for the model is the family;
+    empty when the service reports neither. components lists a projector, VAE or
+    other role-bearing object a store holds and this family's descriptor named
+    as its base, or, when no descriptor could derive a base for it, an object
+    that is this family's only content — held_in and family_source cover the
+    family it was folded into or the family it stands in for either way;
+    components exists to say the family answers for a part, not a whole model,
+    when that is what it is."""
+
     family: str = ""
     names: list[Alias] = dataclasses.field(default_factory=list)
+    held_in: list[str] = dataclasses.field(default_factory=list)
+    family_source: str = ""
+    components: list[Component] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -494,6 +533,45 @@ def _write_alias(out, v, depth):
         _esc(out, "profiles")
         out += b": "
         _strs(out, v.profiles, depth + 1)
+    if v.held_in:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "held_in")
+        out += b": "
+        _strs(out, v.held_in, depth + 1)
+    if v.context_length != 0:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "context_length")
+        out += b": "
+        _num(out, v.context_length)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_component(out, v, depth):
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "store")
+    out += b": "
+    _esc(out, v.store)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "role")
+    out += b": "
+    _esc(out, v.role)
+    if v.name:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "name")
+        out += b": "
+        _esc(out, v.name)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -512,6 +590,27 @@ def _write_family(out, v, depth):
     _esc(out, "names")
     out += b": "
     _write_list(out, v.names, depth + 1, _write_alias)
+    if v.held_in:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "held_in")
+        out += b": "
+        _strs(out, v.held_in, depth + 1)
+    if v.family_source:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "family_source")
+        out += b": "
+        _esc(out, v.family_source)
+    if v.components:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "components")
+        out += b": "
+        _write_list(out, v.components, depth + 1, _write_component)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1004,6 +1103,17 @@ class _Reader:
     def string(self):
         if self.at() != _QUOTE:
             raise self.refuse("wrong_type")
+        # Most wire keys and values contain no escapes. Search and validate
+        # those bytes in C; retain the bytewise path for escapes and refusals.
+        end = self.buf.find(b'"', self.pos + 1)
+        if end >= 0:
+            chunk = self.buf[self.pos + 1:end]
+            if b"\\" not in chunk and (not chunk or min(chunk) >= 0x20):
+                self.pos = end + 1
+                try:
+                    return chunk.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise self.refuse("bad_string") from None
         self.pos += 1
         out = bytearray()
         while True:
@@ -1614,6 +1724,16 @@ def _read_alias(r):
                     raise r.refuse("duplicate_field")
                 seen |= 32
                 v.profiles = r.str_list()
+            elif key == "held_in":
+                if seen & 64:
+                    raise r.refuse("duplicate_field")
+                seen |= 64
+                v.held_in = r.str_list()
+            elif key == "context_length":
+                if seen & 128:
+                    raise r.refuse("duplicate_field")
+                seen |= 128
+                v.context_length = r.integer(-9223372036854775808, 9223372036854775807)
             else:
                 r.skip_value()
             r.ws()
@@ -1625,6 +1745,55 @@ def _read_alias(r):
     r.pos += 1
     r.depth -= 1
     if seen & 15 != 15:
+        raise r.refuse("missing_field")
+    return v
+
+
+def _read_component(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = Component()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "store":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.store = r.string()
+            elif key == "role":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.role = r.string()
+            elif key == "name":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.name = r.string()
+            else:
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 3 != 3:
         raise r.refuse("missing_field")
     return v
 
@@ -1658,6 +1827,21 @@ def _read_family(r):
                     raise r.refuse("duplicate_field")
                 seen |= 2
                 v.names = _read_list(r, _read_alias)
+            elif key == "held_in":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.held_in = r.str_list()
+            elif key == "family_source":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.family_source = r.string()
+            elif key == "components":
+                if seen & 16:
+                    raise r.refuse("duplicate_field")
+                seen |= 16
+                v.components = _read_list(r, _read_component)
             else:
                 r.skip_value()
             r.ws()
@@ -2590,8 +2774,9 @@ _SERVICE_RECORDS = {
     "PickRequest": (PickRequest, [("model", "string", "never"), ("fresh", "bool", "never"), ("allowed", "HostAllowance", "absent"), ("profile", "string", "zero"), ]),
     "Caller": (Caller, [("user_description", "string", "never"), ("path_description", "string", "never"), ]),
     "Observation": (Observation, [("caller", "Caller", "never"), ("took_ms", "i64", "never"), ("cache_age_ms", "i64", "never"), ]),
-    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ]),
-    "Family": (Family, [("family", "string", "never"), ("names", "list<Alias>", "never"), ]),
+    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ("held_in", "list<string>", "zero"), ("context_length", "i64", "zero"), ]),
+    "Component": (Component, [("store", "string", "never"), ("role", "string", "never"), ("name", "string", "zero"), ]),
+    "Family": (Family, [("family", "string", "never"), ("names", "list<Alias>", "never"), ("held_in", "list<string>", "zero"), ("family_source", "string", "zero"), ("components", "list<Component>", "zero"), ]),
     "ModelsSnapshot": (ModelsSnapshot, [("observation", "Observation", "never"), ("models", "list<Family>", "never"), ]),
     "HostState": (HostState, [("host", "string", "never"), ("base", "string", "never"), ("up", "bool", "never"), ("why", "string", "never"), ("installed", "i64", "never"), ("resident", "list<string>", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("wire", "string", "zero"), ("credential", "string", "zero"), ("declared_by", "string", "zero"), ("profiles", "list<string>", "zero"), ("domain", "string", "zero"), ]),
     "Ask": (Ask, [("at", "string", "never"), ("caller", "string", "never"), ("user", "string", "never"), ("model", "string", "never"), ("family", "string", "never"), ("verdict", "string", "never"), ("host", "string", "never"), ]),
@@ -2620,8 +2805,8 @@ class Router:
         raise NotImplementedError
 
     def hosts(self, fresh: bool) -> HostsSnapshot:
-        """Read host residency, duplicate families and routing audit. GPU cost is
-        outside this subset."""
+        """Read host residency, duplicate families and routing audit. Who holds the
+        card is abstraction.resource/table@1, outside this subset."""
         raise NotImplementedError
 
     def pick(self, request: PickRequest) -> PickResult:

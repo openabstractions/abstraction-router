@@ -31,8 +31,8 @@ type Host struct {
 
 // Router refusal codes for an explicit receiving policy.
 const (
-	CodeForbidden         = "forbidden"
-	CodePolicyUnavailable = "policy_unavailable"
+	CodeForbidden   = "forbidden"
+	CodeUnavailable = "unavailable"
 )
 
 // Actions a Policy receives, and the resource each names.
@@ -74,15 +74,15 @@ func Listen(endpoint string, provider *router.Router) (*Host, error) {
 	if provider == nil {
 		return nil, errors.New("router service: nil provider")
 	}
-	if err := identity.CanEver(router.Bound); err != nil {
+	if err := listen.CanEver(endpoint, router.Bound); err != nil {
 		return nil, fmt.Errorf("router service cannot bind callers: %w", err)
 	}
-	l, err := listen.Listen(endpoint)
+	l, err := listen.ListenFramed(endpoint, router.Bound)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Host{listener: l, router: provider, ctx: ctx, cancel: cancel}, nil
+	return &Host{listener: listen.Sessions(l, listen.SessionOptions{}), router: provider, ctx: ctx, cancel: cancel}, nil
 }
 func (h *Host) Close() error {
 	var err error
@@ -166,7 +166,7 @@ func (r *receiver) authorize(action, resource string) error {
 		return nil
 	}
 	if ctx.Err() != nil || errors.Is(err, ErrPolicyUnavailable) {
-		return &wire.ServiceError{Code: CodePolicyUnavailable, Message: "router policy decision unavailable"}
+		return &wire.ServiceError{Code: CodeUnavailable, Message: "rights:unavailable"}
 	}
 	return &wire.ServiceError{Code: CodeForbidden, Message: "router operation not permitted"}
 }
@@ -187,18 +187,91 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 	}
 	// Caller is created by ReceiveFramed after checking router.Bound, never decoded.
 	out := r.provider.Answer(request, r.call.Caller)
-	if out.Err() != nil {
-		code := out.Code
-		if code == "" {
-			code = router.CodeInternal
-		}
-		return out, &wire.ServiceError{Code: wire.ServiceErrorCode(code), Message: out.Error}
-	}
-	return out, nil
+	return out, providerResponseError(out)
 }
+
+// providerResponseError maps the router's outcome words to the service error
+// contract. Legacy text-only refusals receive the stable internal code.
+func providerResponseError(out router.Response) error {
+	if out.Err() == nil {
+		return nil
+	}
+	code := out.Code
+	if code == "" {
+		code = router.CodeInternal
+	}
+	return &wire.ServiceError{Code: wire.ServiceErrorCode(code), Message: out.Error}
+}
+
 func observation(r router.Response) wire.Observation {
 	return wire.Observation{Caller: wire.Caller{UserDescription: r.Caller.User, PathDescription: r.Caller.Path}, TookMs: r.TookMS, CacheAgeMs: r.AgeMS}
 }
+
+// toWireAlias is the one place that carries router.Alias's fields onto the
+// generated wire.Alias. convert_test.go checks by reflection that the two
+// structs' field sets still match, so a field added to either without this
+// function updated fails a test instead of dropping silently.
+func toWireAlias(a router.Alias) wire.Alias {
+	return wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles, HeldIn: a.HeldIn, ContextLength: a.ContextLength}
+}
+
+// toWireFamily is the one place that carries router.Family's fields onto the
+// generated wire.Family, converting each of its Names through toWireAlias and
+// each of its Components through toWireComponent. convert_test.go's
+// reflection parity test covers it the same way as toWireAlias.
+func toWireFamily(f router.Family) wire.Family {
+	out := wire.Family{Family: f.Family, HeldIn: f.HeldIn, FamilySource: f.FamilySource}
+	for _, a := range f.Names {
+		out.Names = append(out.Names, toWireAlias(a))
+	}
+	for _, c := range f.Components {
+		out.Components = append(out.Components, toWireComponent(c))
+	}
+	return out
+}
+
+// toWireComponent is the one place that carries router.Component's fields
+// onto the generated wire.Component. convert_test.go's reflection parity
+// test covers it the same way as toWireAlias.
+func toWireComponent(c router.Component) wire.Component {
+	return wire.Component{Store: c.Store, Role: c.Role, Name: c.Name}
+}
+
+// toWireHostState is the one place that carries router.HostState's fields
+// onto the generated wire.HostState. Installed widens from int to int64;
+// every other field copies by name. convert_test.go's reflection parity test
+// covers it the same way as toWireAlias.
+func toWireHostState(h router.HostState) wire.HostState {
+	return wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable, Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy, Profiles: h.Profiles, Domain: h.Domain}
+}
+
+// askTimeLayout is the layout toWireAsk formats router.Ask's At into; it is
+// also the timestamp format for the legacy wire.Ask over the framed
+// protocol. convert_test.go parses wire.Ask's At back with the same layout
+// to check the value round-trips.
+const askTimeLayout = "2006-01-02T15:04:05.000000Z"
+
+// toWireAsk is the one place that carries router.Ask's fields onto the
+// generated wire.Ask. At formats router.Ask's time.Time as the string
+// wire.Ask carries instead. convert_test.go's reflection parity test covers
+// it the same way as toWireAlias.
+func toWireAsk(a router.Ask) wire.Ask {
+	return wire.Ask{At: a.At.UTC().Format(askTimeLayout), Caller: a.Caller, User: a.User, Model: a.Model, Family: a.Family, Verdict: a.Verdict, Host: a.Host}
+}
+
+// toWireDecision is the one place that carries router.Decision's fields onto
+// the generated wire.Decision. Loads widens from int to int64; Authorised
+// moves from a pointer to a string slice to a pointer to the generated
+// HostAllowance wrapper. convert_test.go's reflection parity test covers it
+// the same way as toWireAlias.
+func toWireDecision(d router.Decision) wire.Decision {
+	out := wire.Decision{Asked: d.Asked, Family: d.Family, Verdict: d.Verdict, Host: d.Host, Model: d.Model, Endpoint: d.Endpoint, InstalledOn: d.InstalledOn, Withheld: d.Withheld, Loads: int64(d.Loads), Why: d.Why}
+	if d.Authorised != nil {
+		out.Authorised = &wire.HostAllowance{Hosts: append([]string{}, (*d.Authorised)...)}
+	}
+	return out
+}
+
 func (answer answerFunc) Models(fresh bool) (wire.ModelsSnapshot, error) {
 	out, err := answer(router.Request{Op: router.OpModels, Fresh: fresh})
 	if err != nil {
@@ -206,11 +279,7 @@ func (answer answerFunc) Models(fresh bool) (wire.ModelsSnapshot, error) {
 	}
 	value := wire.ModelsSnapshot{Observation: observation(out)}
 	for _, f := range out.Models {
-		family := wire.Family{Family: f.Family}
-		for _, a := range f.Names {
-			family.Names = append(family.Names, wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles})
-		}
-		value.Models = append(value.Models, family)
+		value.Models = append(value.Models, toWireFamily(f))
 	}
 	return value, nil
 }
@@ -221,30 +290,39 @@ func (answer answerFunc) Hosts(fresh bool) (wire.HostsSnapshot, error) {
 	}
 	value := wire.HostsSnapshot{Observation: observation(out), Doubled: out.Doubled}
 	for _, h := range out.Hosts {
-		value.Hosts = append(value.Hosts, wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable, Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy, Profiles: h.Profiles, Domain: h.Domain})
+		value.Hosts = append(value.Hosts, toWireHostState(h))
 	}
 	for _, a := range out.Asked {
-		value.Asked = append(value.Asked, wire.Ask{At: a.At.UTC().Format("2006-01-02T15:04:05.000000Z"), Caller: a.Caller, User: a.User, Model: a.Model, Family: a.Family, Verdict: a.Verdict, Host: a.Host})
+		value.Asked = append(value.Asked, toWireAsk(a))
 	}
 	return value, nil
 }
-func (answer answerFunc) Pick(request wire.PickRequest) (wire.PickResult, error) {
-	input := router.Request{Op: router.OpRoute, Model: request.Model, Fresh: request.Fresh, Profile: request.Profile}
-	if request.Allowed != nil {
-		hosts := append([]string{}, request.Allowed.Hosts...)
-		input.Hosts = &hosts
+
+// fromWirePickRequest is the one place that carries wire.PickRequest's
+// fields onto router.Request for Pick, the reverse of the toWire* functions
+// above. Op is computed rather than carried: every Pick call performs
+// router.OpRoute, and the wire request has no operation field to read it
+// from. Allowed's *wire.HostAllowance unwraps onto Hosts's *[]string, the
+// field router.Request already uses for every operation.
+// convert_test.go's reverse parity test covers it the same way as
+// toWireAlias, with Op, Hosts and Allowed allowlisted for the reasons above.
+func fromWirePickRequest(p wire.PickRequest) router.Request {
+	req := router.Request{Op: router.OpRoute, Model: p.Model, Fresh: p.Fresh, Profile: p.Profile}
+	if p.Allowed != nil {
+		hosts := append([]string{}, p.Allowed.Hosts...)
+		req.Hosts = &hosts
 	}
-	out, err := answer(input)
+	return req
+}
+
+func (answer answerFunc) Pick(request wire.PickRequest) (wire.PickResult, error) {
+	out, err := answer(fromWirePickRequest(request))
 	if err != nil {
 		return wire.PickResult{}, err
 	}
 	if out.Decision == nil {
 		return wire.PickResult{}, &wire.ServiceError{Code: router.CodeInternal, Message: "provider returned no decision"}
 	}
-	d := out.Decision
-	value := wire.PickResult{Observation: observation(out), Decision: wire.Decision{Asked: d.Asked, Family: d.Family, Verdict: d.Verdict, Host: d.Host, Model: d.Model, Endpoint: d.Endpoint, InstalledOn: d.InstalledOn, Withheld: d.Withheld, Loads: int64(d.Loads), Why: d.Why}}
-	if d.Authorised != nil {
-		value.Decision.Authorised = &wire.HostAllowance{Hosts: append([]string{}, (*d.Authorised)...)}
-	}
+	value := wire.PickResult{Observation: observation(out), Decision: toWireDecision(*out.Decision)}
 	return value, nil
 }

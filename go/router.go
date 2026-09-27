@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/openabstractions/abstraction-model/go/identity"
+	"github.com/openabstractions/abstraction-model/identity"
 )
 
 type snapshot struct {
@@ -32,17 +33,39 @@ type snapshot struct {
 	// profiles holds, per host and model name, the profiles the host's own
 	// metadata reports; a name absent here is judged by its host's profiles.
 	profiles map[string]map[string][]string
-	gpu      []Holder
-	gpuWhy   string
+	// holders is who holds this machine's accelerator memory, read from the
+	// resource table (residency.go); holdersWhy says why it is empty.
+	holders    []Holder
+	holdersWhy string
+	// aliasFamily is the family each host name resolved to at survey time,
+	// by descriptor or by the alias itself. A request naming one of those
+	// names reaches the same family it was catalogued under.
+	aliasFamily map[string]string
+}
+
+// familyOf is the family a request's model name belongs to: the one this survey
+// catalogued that name under, or what the name itself says.
+func (s snapshot) familyOf(name string) string {
+	if fam := s.aliasFamily[strings.ToLower(name)]; fam != "" {
+		return fam
+	}
+	return identity.Family(name)
 }
 
 type Router struct {
 	hostsMu sync.Mutex
 	hosts   []*Host
-	mu      sync.Mutex
-	snap    snapshot
-	asked   []Ask
-	apply   Applier
+	heldMu  sync.Mutex
+	// held is what the storage inventory says this machine holds, whatever any
+	// host serves (held.go).
+	held        []HeldObject
+	residencyMu sync.Mutex
+	// residency is where this router reads who holds the card (residency.go).
+	residency ResidencySource
+	mu        sync.Mutex
+	snap      snapshot
+	asked     []Ask
+	apply     Applier
 }
 
 // Hosts are the hosts this router reads, in preference order.
@@ -67,10 +90,11 @@ func New(hosts ...*Host) *Router { return &Router{hosts: hosts} }
 // touches a host, and it only reads.
 func (r *Router) Survey() {
 	type read struct {
-		state     HostState
-		installed []string
-		resident  []string
-		profiles  map[string][]string
+		state         HostState
+		installed     []string
+		resident      []string
+		profiles      map[string][]string
+		contextLength map[string]int64
 		// domain holds the hosts a remote runtime reports.
 		domain []HostState
 	}
@@ -107,34 +131,53 @@ func (r *Router) Survey() {
 				reads[i] = read{state: s}
 				return
 			}
+			s.Up, s.Installed = true, len(installed)
+			// Residency is read separately: a host without a residency route,
+			// or one that is briefly unreachable on that route alone, still has
+			// its installed list. Resident stays unset and Why names what
+			// failed; the installed list is not discarded for it.
 			resident, err := h.resident(h)
 			if err != nil {
 				s.Why = err.Error()
-				reads[i] = read{state: s}
+				reads[i] = read{state: s, installed: installed}
 				return
 			}
-			s.Up, s.Installed, s.Resident = true, len(installed), resident
+			s.Resident = resident
 			var profiles map[string][]string
+			var contextLength map[string]int64
 			if h.modelProfiles != nil {
 				profiles = h.modelProfiles(h, append(slices.Clone(installed), resident...))
 			}
-			reads[i] = read{state: s, installed: installed, resident: resident, profiles: profiles}
+			if h.modelContextLength != nil {
+				contextLength = h.modelContextLength(h, append(slices.Clone(installed), resident...))
+			}
+			reads[i] = read{state: s, installed: installed, resident: resident, profiles: profiles, contextLength: contextLength}
 		}(i, h)
 	}
 	wg.Wait()
 
+	// The storage inventory's descriptors are the model identity. A host's
+	// model is matched to one by the store's own naming (held.go); a model no
+	// descriptor names keeps the host's alias as its family, and the family
+	// says so.
+	prov := index(r.Held())
 	byFamily := map[string]map[string]*Alias{}
 	pick := map[string]map[string]string{}
 	profiles := map[string]map[string][]string{}
+	aliasFamily := map[string]string{}
 	for i, h := range hosts {
 		if reads[i].profiles != nil {
 			profiles[h.Name] = reads[i].profiles
 		}
 		note := func(name string, resident bool) {
-			fam := identity.Family(name)
+			fam, declared := prov.familyOf(name)
+			if !declared {
+				fam = identity.Family(name)
+			}
 			if fam == "" {
 				return
 			}
+			aliasFamily[strings.ToLower(name)] = fam
 			names := byFamily[fam]
 			if names == nil {
 				names = map[string]*Alias{}
@@ -143,7 +186,7 @@ func (r *Router) Survey() {
 			if a, seen := names[name]; seen {
 				a.Resident = a.Resident || resident
 			} else {
-				names[name] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable(), Hosted: h.Hosted, Profiles: reads[i].profiles[name]}
+				names[name] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable(), Hosted: h.Hosted, Profiles: reads[i].profiles[name], ContextLength: reads[i].contextLength[name]}
 			}
 			if pick[fam] == nil {
 				pick[fam] = map[string]string{}
@@ -174,12 +217,12 @@ func (r *Router) Survey() {
 		families = append(families, f)
 	}
 	sort.Slice(families, func(i, j int) bool { return families[i].Family < families[j].Family })
+	// What the machine holds is the other half of the answer: a store's model
+	// that no host serves is still on this machine, and an application asking
+	// what exists here is owed it.
+	families = prov.compose(families)
 
-	gpu, err := gpuHolders()
-	why := ""
-	if err != nil {
-		why = err.Error()
-	}
+	holders, why := r.readHolders(false)
 	states := make([]HostState, 0, len(reads))
 	for i := range reads {
 		states = append(states, reads[i].state)
@@ -188,7 +231,8 @@ func (r *Router) Survey() {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.snap = snapshot{at: time.Now(), hosts: states, families: families, pick: pick, profiles: profiles, gpu: gpu, gpuWhy: why}
+	r.snap = snapshot{at: time.Now(), hosts: states, families: families, pick: pick, profiles: profiles,
+		aliasFamily: aliasFamily, holders: holders, holdersWhy: why}
 }
 
 func (r *Router) latest(fresh bool) snapshot {
@@ -222,9 +266,12 @@ func (r *Router) Models(fresh bool) ([]Family, time.Time) {
 	return s.families, s.at
 }
 
+// Residency is every host this router reads, who holds the machine's
+// accelerator memory as the resource table reports it, why that is empty when
+// it is, the families loaded more than once, and when this was read.
 func (r *Router) Residency(fresh bool) ([]HostState, []Holder, string, []string, time.Time) {
 	s := r.latest(fresh)
-	return s.hosts, s.gpu, s.gpuWhy, doubled(s), s.at
+	return s.hosts, s.holders, s.holdersWhy, doubled(s), s.at
 }
 
 // doubled names a family held by more than one host while it is happening. The
@@ -269,7 +316,7 @@ func cut(k string) (string, string, bool) {
 // become the thing that holds weights.
 func (r *Router) Route(req Request) (*Decision, time.Time) {
 	s := r.latest(req.Fresh)
-	fam := identity.Family(req.Model)
+	fam := s.familyOf(req.Model)
 	d := &Decision{Asked: req.Model, Family: fam, Authorised: req.Hosts}
 	if fam == "" {
 		d.Verdict, d.Why = EmptyFamily, "nothing in "+quote(req.Model)+" names a model"
@@ -281,7 +328,8 @@ func (r *Router) Route(req Request) (*Decision, time.Time) {
 			continue
 		}
 		for _, a := range f.Names {
-			if !has(installedOn, a.Host) {
+			// A name no host serves has no host to install it on.
+			if a.Host != "" && !has(installedOn, a.Host) {
 				installedOn = append(installedOn, a.Host)
 			}
 		}

@@ -11,7 +11,14 @@ interface FrameTransport {
 // hosted is true for a name read from a hosted host's model listing; such a
 // name is never resident. profiles are what the host's own model metadata says
 // this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply.
+// host reports none, and then its HostState profiles apply. held_in names the
+// storage inventory stores holding an object this alias's own name or digest
+// matches, in store order; empty when no store's object matches this name. host
+// is empty exactly for a name no host serves, which a store holds and which is
+// never resident or servable. context_length is the model's context window in
+// tokens, read from the host's own metadata without loading it (LM Studio's
+// max_context_length, Ollama's model_info context_length, Lemonade's
+// max_context_window); zero when the host reports none.
 export interface Alias {
   host: string;
   name: string;
@@ -19,6 +26,8 @@ export interface Alias {
   servable: boolean;
   hosted: boolean;
   profiles: string[];
+  heldIn: string[];
+  contextLength: bigint;
 }
 
 export interface Ask {
@@ -34,6 +43,17 @@ export interface Ask {
 export interface Caller {
   userDescription: string;
   pathDescription: string;
+}
+
+// One role-bearing object a store holds, folded into a family's detail rather
+// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
+// store is the holder, role is projector, vae, or another value a storage
+// inventory source's descriptor names, and name is the store's own name for the
+// object when it named one.
+export interface Component {
+  store: string;
+  role: string;
+  name: string;
 }
 
 export interface Decision {
@@ -55,9 +75,25 @@ export declare class DispatchError extends Error {
   code: string;
 }
 
+// held_in names the storage inventory stores holding an object of this family,
+// in store order, whether or not a host serves it; empty when no store reports
+// one. A family whose names are all unservable is on this machine and answered
+// by nothing. family_source is descriptor when the storage inventory published
+// an abstraction.model/descriptor@1 naming this family, and alias when no
+// descriptor names it and a program's own name for the model is the family;
+// empty when the service reports neither. components lists a projector, VAE or
+// other role-bearing object a store holds and this family's descriptor named as
+// its base, or, when no descriptor could derive a base for it, an object that
+// is this family's only content — held_in and family_source cover the family
+// it was folded into or the family it stands in for either way; components
+// exists to say the family answers for a part, not a whole model, when that is
+// what it is.
 export interface Family {
   family: string;
   names: Alias[];
+  heldIn: string[];
+  familySource: string;
+  components: Component[];
 }
 
 export interface HostAllowance {
@@ -138,7 +174,7 @@ export declare class RouterClient {
   constructor(transport: FrameTransport);
   /** Read model families and aliases. Fresh requests survey the existing hosts. */
   models(fresh: boolean): Promise<ModelsSnapshot>;
-  /** Read host residency, duplicate families and routing audit. GPU cost is outside this subset. */
+  /** Read host residency, duplicate families and routing audit. Who holds the card is abstraction.resource/table@1, outside this subset. */
   hosts(fresh: boolean): Promise<HostsSnapshot>;
   /** Choose a permitted host without loading any model. Missing allowance permits all hosts; an explicit empty allowance permits none. Attribution comes from the bound caller. */
   pick(request: PickRequest): Promise<PickResult>;
@@ -152,7 +188,7 @@ export declare class ServiceError extends Error {
 }
 
 export type ServiceErrorCode = (typeof ServiceErrorCode)[keyof typeof ServiceErrorCode];
-export declare const ServiceErrorCode: Readonly<{ HandlerError: "handler_error"; InvalidResult: "invalid_result"; UnknownVersion: "unknown_version"; UnknownService: "unknown_service"; UnknownMethod: "unknown_method"; WrongMode: "wrong_mode"; Internal: "internal"; InvalidRequest: "invalid_request"; CallerRefused: "caller_refused"; UnknownOperation: "unknown_operation"; PolicyUnavailable: "policy_unavailable"; Forbidden: "forbidden" }>;
+export declare const ServiceErrorCode: Readonly<{ HandlerError: "handler_error"; InvalidResult: "invalid_result"; UnknownVersion: "unknown_version"; UnknownService: "unknown_service"; UnknownMethod: "unknown_method"; WrongMode: "wrong_mode"; Internal: "internal"; InvalidRequest: "invalid_request"; CallerRefused: "caller_refused"; UnknownOperation: "unknown_operation"; Unavailable: "unavailable"; Forbidden: "forbidden" }>;
 
 export declare const credentialConsumers: readonly ["abstraction.router/router@1"];
 
@@ -165,6 +201,8 @@ export declare function newAlias(): Alias;
 export declare function newAsk(): Ask;
 
 export declare function newCaller(): Caller;
+
+export declare function newComponent(): Component;
 
 export declare function newDecision(): Decision;
 
@@ -186,7 +224,7 @@ export declare function newPickResult(): PickResult;
 
 export declare const profiles: readonly ["chat", "embed", "transcription", "speech", "image"];
 
-export declare const routerErrorCodes: readonly ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"];
+export declare const routerErrorCodes: readonly ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"];
 
 export declare const verdicts: readonly ["resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"];
 

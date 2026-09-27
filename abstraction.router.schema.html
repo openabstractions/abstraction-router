@@ -6,9 +6,8 @@
 <link rel="stylesheet" href="style.css">
 
 <main>
-<nav class="site"><a class="name" href="index.html">Open Abstractions</a>
-<a href="index.html">Overview</a> <a href="cases.html">Cases</a> <a href="reference.html">Reference</a> <a href="evidence.html">Evidence</a> <a href="coverage.html">Coverage</a> <a href="adopt.html">Adopt</a>
-<a class="right" href="https://github.com/openabstractions">github.com/openabstractions</a></nav>
+<nav class="site" aria-label="Primary navigation"><a class="name" href="index.html">Open Abstractions</a>
+<a href="adopt.html">Adopt</a><a href="cases.html">Cases</a><span class="nav-devs-label">for developers</span><a href="reference.html">Reference</a><a href="coverage.html">Coverage</a><a href="catalogue.html">Catalogue</a><a href="https://github.com/openabstractions">GitHub</a></nav>
 
 
 <h1>Schema</h1>
@@ -18,14 +17,14 @@
 <h2 id="service-Router">Service <code>Router</code> <span class="tag">[DEF-S1]</span></h2>
 <p>Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router.</p>
 <p>Wire identity: <code>abstraction.router/router@1</code></p>
-<p>Handler error codes, declared by <code>router_error_codes</code>: <code>internal</code>, <code>invalid_request</code>, <code>caller_refused</code>, <code>unknown_operation</code>, <code>policy_unavailable</code>, <code>forbidden</code>. Generated bindings name each as a ServiceErrorCode member beside the dispatcher's own codes.</p>
+<p>Handler error codes, declared by <code>router_error_codes</code>: <code>internal</code>, <code>invalid_request</code>, <code>caller_refused</code>, <code>unknown_operation</code>, <code>unavailable</code>, <code>forbidden</code>. Generated bindings name each as a ServiceErrorCode member beside the dispatcher's own codes.</p>
 <p>Frames carry version, service, method and typed arguments. Transport owns framing, associated exchanges, deadlines and connections. Unknown version/service/method and malformed arguments are rejected before invoking a handler. One-way WriteFrame success means local submission, not remote acceptance or persistence.</p>
 <p>Request-response methods use ExchangeFrame. Replies carry version, service, method, ok and payload; success payload contains typed value (or an empty object for void). Error payload contains nonempty code and message, which may be empty. ServiceError preserves unknown codes. Unexpected handler failures become handler_error without private details; invalid results become invalid_result. Clients validate reply identity and result before exposing it. A malformed frame or transport failure remains a local error; the transport must associate each response with its exchange. C++ dispatchers are pure protocol bindings, not listening servers.</p>
 <p>Read model families and aliases. Fresh requests survey the existing hosts.</p>
 <h3><code>Models</code></h3><p><code>request-response</code> <code>ModelsSnapshot</code></p><ul>
 <li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
 </ul>
-<p>Read host residency, duplicate families and routing audit. GPU cost is outside this subset.</p>
+<p>Read host residency, duplicate families and routing audit. Who holds the card is abstraction.resource/table@1, outside this subset.</p>
 <h3><code>Hosts</code></h3><p><code>request-response</code> <code>HostsSnapshot</code></p><ul>
 <li>Argument 1: <code>bool</code> <code>fresh</code> (required, including zero/false/empty)</li>
 </ul>
@@ -53,7 +52,7 @@
 <tr><td>built in</td><td><code>bool</code> <code>i64</code> <code>string</code></td></tr>
 <tr><td>declared below</td><td><code>Caller</code> <code>Decision</code> <code>HostAllowance</code> <code>Observation</code></td></tr>
 <tr><td>container <span class="tag">[DEF-T3]</span></td><td><code>list&lt;string&gt;</code></td></tr>
-<tr><td>repeated record <span class="tag">[DEF-A9]</span></td><td><code>list&lt;Alias&gt;</code> <code>list&lt;Ask&gt;</code> <code>list&lt;Family&gt;</code> <code>list&lt;HostState&gt;</code></td></tr>
+<tr><td>repeated record <span class="tag">[DEF-A9]</span></td><td><code>list&lt;Alias&gt;</code> <code>list&lt;Ask&gt;</code> <code>list&lt;Component&gt;</code> <code>list&lt;Family&gt;</code> <code>list&lt;HostState&gt;</code></td></tr>
 </tbody></table></div>
 <h3 id="named-types">Named types <span class="tag">[DEF-T2]</span></h3>
 <p class="meta">One spelling is written <span class="tag">[DEF-G2]</span> and a wider set is read <span class="tag">[DEF-G1]</span>; the width between them is the interoperability guarantee.</p>
@@ -109,6 +108,17 @@
 <tr><td>4</td><td><code>servable</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
 <tr><td>5</td><td><code>hosted</code></td><td><code>bool</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 <tr><td>6</td><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>7</td><td><code>held_in</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>8</td><td><code>context_length</code></td><td><code>i64</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+</tbody></table></div>
+<h3 id="struct-Component"><code>Component</code></h3>
+<p class="meta">unknown fields <code>grant</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>field</th><th>type</th><th>presence</th><th>named elsewhere</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>store</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
+<tr><td>2</td><td><code>role</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
+<tr><td>3</td><td><code>name</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Family"><code>Family</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -117,6 +127,9 @@
 <tbody>
 <tr><td>1</td><td><code>family</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
 <tr><td>2</td><td><code>names</code></td><td><code>list&lt;Alias&gt;</code></td><td>required</td><td>—</td></tr>
+<tr><td>3</td><td><code>held_in</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>4</td><td><code>family_source</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>5</td><td><code>components</code></td><td><code>list&lt;Component&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-ModelsSnapshot"><code>ModelsSnapshot</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -201,7 +214,7 @@
 <tr><td><code>verdicts</code></td><td><code>list&lt;string&gt;</code></td><td><code>resident, would-load, hosted, unservable, not-here, unparseable, unauthorised, no-host</code></td></tr>
 <tr><td><code>wire_kinds</code></td><td><code>list&lt;string&gt;</code></td><td><code>openai-compatible, anthropic-messages, deepgram-prerecorded, elevenlabs-stream, stability-v2beta, fal-queue, replicate-predictions, openai-realtime, oa-remote@1</code></td></tr>
 <tr><td><code>credential_consumers</code></td><td><code>list&lt;string&gt;</code></td><td><code>abstraction.router/router@1</code></td></tr>
-<tr><td><code>router_error_codes</code></td><td><code>list&lt;string&gt;</code></td><td><code>internal, invalid_request, caller_refused, unknown_operation, policy_unavailable, forbidden</code></td></tr>
+<tr><td><code>router_error_codes</code></td><td><code>list&lt;string&gt;</code></td><td><code>internal, invalid_request, caller_refused, unknown_operation, unavailable, forbidden</code></td></tr>
 </tbody></table></div>
 <h2 id="refusals">Refusal words <span class="tag">[DEF-R1]</span></h2>
 <div class="wrap"><table>

@@ -38,10 +38,11 @@ func TestLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("caller the kernel vouched for: %s", models.Caller)
-	t.Logf("ANSWER 1 — %d families under %d host names", len(models.Models), aliases(models.Models))
+	t.Logf("ANSWER 1 — %d families under %d host names, %d of them from a descriptor",
+		len(models.Models), aliases(models.Models), fromDescriptor(models.Models))
 	for _, f := range models.Models {
 		if len(f.Names) > 1 {
-			t.Logf("  %s  %s", f.Family, names(f))
+			t.Logf("  %-9s %s  %s", f.FamilySource, f.Family, names(f))
 		}
 	}
 
@@ -57,11 +58,11 @@ func TestLive(t *testing.T) {
 			t.Logf("  %-9s down %s", h.Host, h.Why)
 		}
 	}
-	if res.GPUWhy != "" {
-		t.Logf("  GPU unreadable: %s", res.GPUWhy)
+	if res.HoldersWhy != "" {
+		t.Logf("  holders unreadable: %s", res.HoldersWhy)
 	}
-	for _, g := range res.GPU {
-		t.Logf("  GPU %-28s pid %-7d %6.2f GiB", g.Process, g.PID, g.GiB)
+	for _, g := range res.Holders {
+		t.Logf("  holds %-48s account %-14s %6.2f GiB", g.Program, g.Account, g.GiB)
 	}
 	t.Logf("  doubled: %v", res.Doubled)
 
@@ -105,8 +106,8 @@ func TestLive(t *testing.T) {
 		// Another task on this machine is loading weights of its own, so the
 		// machine total moves for reasons that are not this request. Per process
 		// is the only reading that answers "did routing here load anything".
-		for _, b := range start.GPU {
-			t.Logf("  GPU %-24s pid %-7d %6.2f -> %6.2f GiB", b.Process, b.PID, b.GiB, gib(after.GPU, b.PID))
+		for _, b := range start.Holders {
+			t.Logf("  holds %-44s %6.2f -> %6.2f GiB", b.Program, b.GiB, gib(after.Holders, b.Program))
 		}
 	}
 
@@ -134,6 +135,18 @@ func latency(t *testing.T, c *Client, req Request) (lo, mid, hi time.Duration) {
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+
+// fromDescriptor counts the families the storage inventory named, as against
+// the ones that are a host's alias because no store could say what the file is.
+func fromDescriptor(fs []Family) int {
+	n := 0
+	for _, f := range fs {
+		if f.FamilySource == FromDescriptor {
+			n++
+		}
+	}
+	return n
+}
 
 func aliases(fs []Family) int {
 	n := 0
@@ -169,7 +182,7 @@ func held(g []Holder) float64 {
 	for _, h := range g {
 		t += h.GiB
 	}
-	return round(t)
+	return float64(int64(t*100+0.5)) / 100
 }
 
 func oneToken(endpoint, model string) (string, error) {
@@ -215,11 +228,14 @@ func get(t *testing.T, url string) string {
 	return resp.Status + " " + buf.String()
 }
 
-func gib(hs []Holder, pid int) float64 {
+// gib is what one program holds after the request, summed over its rows: a
+// program with two processes on the card has two of them.
+func gib(hs []Holder, program string) float64 {
+	total := 0.0
 	for _, h := range hs {
-		if h.PID == pid {
-			return h.GiB
+		if h.Program == program {
+			total += h.GiB
 		}
 	}
-	return 0
+	return total
 }

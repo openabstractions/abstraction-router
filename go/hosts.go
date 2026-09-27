@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openabstractions/abstraction-resource/go/instrument"
 )
 
 // A Host is a model runtime this machine already has. The router reads it and
@@ -51,6 +53,16 @@ type Host struct {
 	// modelProfiles reads the profiles of installed models from the host's own
 	// metadata; nil when the host reports none.
 	modelProfiles func(h *Host, names []string) map[string][]string
+	// modelContextLength reads each installed model's context window in
+	// tokens from the host's own metadata, without loading anything; nil when
+	// the host reports none, and a name it does carry but reports no length
+	// for is simply absent from the map.
+	modelContextLength func(h *Host, names []string) map[string]int64
+	// unload is the host's own mechanism for letting go of what it holds
+	// (unload.go); nil when it has none. The router never calls it: a route,
+	// an inventory read and a residency read all leave the host's weights
+	// where they are, and only a lease asked back reaches this field.
+	unload func(ctx context.Context, h *Host) error
 }
 
 func (h *Host) Servable() bool { return h.Chat != "" }
@@ -173,21 +185,33 @@ func fetch(url string, into any) error {
 	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(into)
 }
 
+// lemonadeModel is one entry of Lemonade's GET /api/v1/models listing.
+type lemonadeModel struct {
+	ID               string `json:"id"`
+	Checkpoint       string `json:"checkpoint"`
+	Downloaded       bool   `json:"downloaded"`
+	MaxContextWindow int64  `json:"max_context_window"`
+}
+
+func lemonadeList(h *Host) ([]lemonadeModel, error) {
+	var d struct {
+		Data []lemonadeModel `json:"data"`
+	}
+	if err := fetch(h.Base+"/api/v1/models", &d); err != nil {
+		return nil, err
+	}
+	return d.Data, nil
+}
+
 func Lemonade(base string) *Host {
 	return &Host{Name: "lemonade", Base: base, Chat: "/api/v1/chat/completions",
 		installed: func(h *Host) ([]string, error) {
-			var d struct {
-				Data []struct {
-					ID         string `json:"id"`
-					Checkpoint string `json:"checkpoint"`
-					Downloaded bool   `json:"downloaded"`
-				} `json:"data"`
-			}
-			if err := fetch(h.Base+"/api/v1/models", &d); err != nil {
+			d, err := lemonadeList(h)
+			if err != nil {
 				return nil, err
 			}
 			var out []string
-			for _, m := range d.Data {
+			for _, m := range d {
 				if m.Downloaded {
 					out = append(out, m.ID)
 					if m.Checkpoint != "" {
@@ -196,6 +220,25 @@ func Lemonade(base string) *Host {
 				}
 			}
 			return out, nil
+		},
+		modelContextLength: func(h *Host, names []string) map[string]int64 {
+			d, err := lemonadeList(h)
+			if err != nil {
+				return nil
+			}
+			out := map[string]int64{}
+			for _, m := range d {
+				if m.MaxContextWindow <= 0 {
+					continue
+				}
+				if has(names, m.ID) {
+					out[m.ID] = m.MaxContextWindow
+				}
+				if m.Checkpoint != "" && has(names, m.Checkpoint) {
+					out[m.Checkpoint] = m.MaxContextWindow
+				}
+			}
+			return out
 		},
 		resident: func(h *Host) ([]string, error) {
 			var d struct {
@@ -206,7 +249,7 @@ func Lemonade(base string) *Host {
 				} `json:"all_models_loaded"`
 			}
 			if err := fetch(h.Base+"/api/v1/health", &d); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("health:%s", err)
 			}
 			var out []string
 			for _, m := range d.All {
@@ -221,18 +264,19 @@ func Lemonade(base string) *Host {
 		}}
 }
 
+// lmStudioModel is one entry of LM Studio's GET /api/v0/models listing
+// (lmstudio.ai/docs/developer/rest/endpoints).
+type lmStudioModel struct {
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	State            string `json:"state"`
+	MaxContextLength int64  `json:"max_context_length"`
+}
+
 func LMStudio(base string) *Host {
-	list := func(h *Host) ([]struct {
-		ID    string `json:"id"`
-		Type  string `json:"type"`
-		State string `json:"state"`
-	}, error) {
+	list := func(h *Host) ([]lmStudioModel, error) {
 		var d struct {
-			Data []struct {
-				ID    string `json:"id"`
-				Type  string `json:"type"`
-				State string `json:"state"`
-			} `json:"data"`
+			Data []lmStudioModel `json:"data"`
 		}
 		err := fetch(h.Base+"/api/v0/models", &d)
 		return d.Data, err
@@ -264,6 +308,19 @@ func LMStudio(base string) *Host {
 			}
 			return out
 		},
+		modelContextLength: func(h *Host, names []string) map[string]int64 {
+			d, err := list(h)
+			if err != nil {
+				return nil
+			}
+			out := map[string]int64{}
+			for _, m := range d {
+				if m.MaxContextLength > 0 && has(names, m.ID) {
+					out[m.ID] = m.MaxContextLength
+				}
+			}
+			return out
+		},
 		resident: func(h *Host) ([]string, error) {
 			d, err := list(h)
 			if err != nil {
@@ -276,7 +333,8 @@ func LMStudio(base string) *Host {
 				}
 			}
 			return out, nil
-		}}
+		},
+		unload: unloadLMStudio}
 }
 
 func Ollama(base string) *Host {
@@ -297,9 +355,11 @@ func Ollama(base string) *Host {
 	}
 	show := &ollamaShow{}
 	return &Host{Name: "ollama", Base: base, Chat: "/v1/chat/completions",
-		installed:     func(h *Host) ([]string, error) { return names(h.Base + "/api/tags") },
-		resident:      func(h *Host) ([]string, error) { return names(h.Base + "/api/ps") },
-		modelProfiles: show.profiles}
+		installed:          func(h *Host) ([]string, error) { return names(h.Base + "/api/tags") },
+		resident:           func(h *Host) ([]string, error) { return names(h.Base + "/api/ps") },
+		modelProfiles:      show.profiles,
+		modelContextLength: show.contextLength,
+		unload:             unloadOllama}
 }
 
 // WhisperCPP is one explicitly configured whisper.cpp server. Its process
@@ -350,7 +410,51 @@ func ComfyUI(base string) *Host {
 			sort.Strings(out)
 			return out, nil
 		},
-		resident: func(*Host) ([]string, error) { return nil, nil }}
+		resident: comfyResident,
+		unload:   unloadComfyUI}
+}
+
+// comfySystemStats is the shape of GET /system_stats (ComfyUI's own
+// server.py, routes.get("/system_stats")): one entry per torch device it
+// enumerates, primary device first, with vram_total and vram_free in bytes.
+// No stock route names the checkpoint behind a hold — /system_stats reports
+// devices, not weights, and neither does /prompt or /queue — so a render
+// underway is a hold with an amount and no name to give it.
+type comfySystemStats struct {
+	Devices []struct {
+		VRAMTotal int64 `json:"vram_total"`
+		VRAMFree  int64 `json:"vram_free"`
+	} `json:"devices"`
+}
+
+// comfyResident sums vram_total-vram_free over every device /system_stats
+// reports and reads that as ComfyUI's hold, the way the instrument reads a
+// process (research/resources/COMFY-CARD-2026-09-22.md section 1: the same
+// figure a render's own weights and allocator cache show up as). Below
+// instrument.Threshold the reading is the machine's own idle baseline, the
+// same floor the instrument applies to every other process, and reporting it
+// here would make attachedHost.Holding (serve/runtime_resources.go) find
+// ComfyUI a holder worth asking every time it is merely up. At or above it,
+// resident carries one entry, named loaded since no route gives the
+// checkpoint a name, with the amount /system_stats measured: the one figure
+// this host's reading actually carries, unlike LM Studio's and Ollama's own
+// resident model lists (CONTRACT.md RES-T3 is about those; this reading has
+// no model name to report in its place).
+func comfyResident(h *Host) ([]string, error) {
+	var stats comfySystemStats
+	if err := fetch(h.Base+"/system_stats", &stats); err != nil {
+		return nil, err
+	}
+	var held int64
+	for _, d := range stats.Devices {
+		if used := d.VRAMTotal - d.VRAMFree; used > 0 {
+			held += used
+		}
+	}
+	if held < instrument.Threshold {
+		return nil, nil
+	}
+	return []string{fmt.Sprintf("loaded@%d", held)}, nil
 }
 
 // SwarmUI is one local generation host using its documented T2I API.
@@ -391,6 +495,20 @@ func openAILocal(name, base, api string) *Host {
 			return out, nil
 		},
 		resident: func(*Host) ([]string, error) { return nil, nil }}
+}
+
+// OpenAICompatible is a local server speaking OpenAI chat completions under
+// api. models is what it serves, for a server whose list is known before it
+// answers — a process another program starts for one file and stops again, so
+// asking it what it holds would start it. An empty models reads the list from
+// api+"/models" like any other local server.
+func OpenAICompatible(name, base, api string, models []string) *Host {
+	h := openAILocal(name, base, api)
+	if len(models) > 0 {
+		listed := append([]string(nil), models...)
+		h.installed = func(*Host) ([]string, error) { return append([]string(nil), listed...), nil }
+	}
+	return h
 }
 
 // DockerModelRunner is Docker Model Runner on its host TCP port; its

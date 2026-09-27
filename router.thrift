@@ -1,7 +1,9 @@
 namespace * abstraction.router
 
 // Framed service subset: inventory, host residency, and routing decisions.
-// GPU cost and the legacy HTTP window are not part of this interface.
+// Who holds the machine's accelerator memory is abstraction.resource/table@1,
+// which the router reads and this interface does not carry. The legacy HTTP
+// window is not part of it either.
 encoding json {
  escape="minimal"
  indent="2"
@@ -59,11 +61,21 @@ struct Alias {
  4: required bool servable
  5: optional bool hosted(omit="zero")
  6: optional list<string> profiles(omit="zero")
-}(unknown_fields="grant",doc="hosted is true for a name read from a hosted host's model listing; such a name is never resident. profiles are what the host's own model metadata says this name serves (LM Studio's type, Ollama's capabilities); empty when the host reports none, and then its HostState profiles apply.")
+ 7: optional list<string> held_in(omit="zero")
+ 8: optional i64 context_length(omit="zero")
+}(unknown_fields="grant",doc="hosted is true for a name read from a hosted host's model listing; such a name is never resident. profiles are what the host's own model metadata says this name serves (LM Studio's type, Ollama's capabilities); empty when the host reports none, and then its HostState profiles apply. held_in names the storage inventory stores holding an object this alias's own name or digest matches, in store order; empty when no store's object matches this name. host is empty exactly for a name no host serves, which a store holds and which is never resident or servable. context_length is the model's context window in tokens, read from the host's own metadata without loading it (LM Studio's max_context_length, Ollama's model_info context_length, Lemonade's max_context_window); zero when the host reports none.")
+struct Component {
+ 1: required string store
+ 2: required string role
+ 3: optional string name(omit="zero")
+}(unknown_fields="grant",doc="One role-bearing object a store holds, folded into a family's detail rather than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is projector, vae, or another value a storage inventory source's descriptor names, and name is the store's own name for the object when it named one.")
 struct Family {
  1: required string family
  2: required list<Alias> names
-}(unknown_fields="grant")
+ 3: optional list<string> held_in(omit="zero")
+ 4: optional string family_source(omit="zero")
+ 5: optional list<Component> components(omit="zero")
+}(unknown_fields="grant",doc="held_in names the storage inventory stores holding an object of this family, in store order, whether or not a host serves it; empty when no store reports one. A family whose names are all unservable is on this machine and answered by nothing. family_source is descriptor when the storage inventory published an abstraction.model/descriptor@1 naming this family, and alias when no descriptor names it and a program's own name for the model is the family; empty when the service reports neither. components lists a projector, VAE or other role-bearing object a store holds and this family's descriptor named as its base, or, when no descriptor could derive a base for it, an object that is this family's only content — held_in and family_source cover the family it was folded into or the family it stands in for either way; components exists to say the family answers for a part, not a whole model, when that is what it is.")
 struct ModelsSnapshot {
  1: required Observation observation
  2: required list<Family> models
@@ -136,10 +148,10 @@ struct PickResult {
 }(unknown_fields="grant")
 // Codes Router handlers send on the reply error channel, beside the
 // dispatcher's own. A provider may pass through a code of its own.
-const list<string> router_error_codes = ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"]
+const list<string> router_error_codes = ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"]
 
 service Router {
  ModelsSnapshot Models(1:bool fresh)(doc="Read model families and aliases. Fresh requests survey the existing hosts.")
- HostsSnapshot Hosts(1:bool fresh)(doc="Read host residency, duplicate families and routing audit. GPU cost is outside this subset.")
+ HostsSnapshot Hosts(1:bool fresh)(doc="Read host residency, duplicate families and routing audit. Who holds the card is abstraction.resource/table@1, outside this subset.")
  PickResult Pick(1:PickRequest request)(doc="Choose a permitted host without loading any model. Missing allowance permits all hosts; an explicit empty allowance permits none. Attribution comes from the bound caller.")
 }(wire_name="abstraction.router/router@1",error_codes="router_error_codes",doc="Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router.")

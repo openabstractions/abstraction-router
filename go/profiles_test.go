@@ -144,6 +144,100 @@ func TestEmbedURLSitsBesideTheChatPath(t *testing.T) {
 	}
 }
 
+// ollamaWithShowContext serves tags, ps and /api/show with both capabilities
+// and a model_info context length per model, so a survey reads both from one
+// call.
+func ollamaWithShowContext(t *testing.T, arch string, contextLength map[string]int64) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
+		var models []map[string]string
+		for name := range contextLength {
+			models = append(models, map[string]string{"name": name})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"models": models})
+	})
+	mux.HandleFunc("/api/ps", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(`{"models":[]}`)) })
+	mux.HandleFunc("/api/show", func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Model string }
+		if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&body) != nil {
+			http.Error(w, "bad", 400)
+			return
+		}
+		n, ok := contextLength[body.Model]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"capabilities": []string{"completion"},
+			"model_info":   map[string]any{"general.architecture": arch, arch + ".context_length": n},
+		})
+	})
+	s := httptest.NewServer(mux)
+	t.Cleanup(s.Close)
+	return s.URL
+}
+
+// LM Studio's max_context_length, Ollama's model_info context length and
+// Lemonade's max_context_window each reach the survey's Alias.ContextLength
+// without loading a model: LM Studio and Lemonade read it from the same
+// listing already used for installed/profiles, and Ollama's /api/show is a
+// metadata read, never a load.
+func TestHostsReportContextLength(t *testing.T) {
+	lmstudio := serve(t, map[string]string{
+		"/api/v0/models": `{"data":[{"id":"qwen/qwen3-8b","type":"llm","state":"loaded","max_context_length":40960}]}`,
+	})
+	lemonade := serve(t, map[string]string{
+		"/api/v1/models": `{"data":[{"id":"Qwen3-8B-GGUF","checkpoint":"unsloth/Qwen3-8B-GGUF:Q4_K_XL.gguf","downloaded":true,"max_context_window":131072}]}`,
+		"/api/v1/health": `{"all_models_loaded":[]}`,
+	})
+	ollama := ollamaWithShowContext(t, "qwen3", map[string]int64{"qwen3:8b": 32768})
+	r := New(LMStudio(lmstudio), Lemonade(lemonade), Ollama(ollama))
+	r.Survey()
+	families, _ := r.Models(false)
+	want := map[string]int64{
+		"qwen/qwen3-8b":                      40960,
+		"Qwen3-8B-GGUF":                      131072,
+		"unsloth/Qwen3-8B-GGUF:Q4_K_XL.gguf": 131072,
+		"qwen3:8b":                           32768,
+	}
+	seen := map[string]bool{}
+	for _, f := range families {
+		for _, a := range f.Names {
+			if n, ok := want[a.Name]; ok {
+				seen[a.Name] = true
+				if a.ContextLength != n {
+					t.Fatalf("alias %s: context length %d, want %d", a.Name, a.ContextLength, n)
+				}
+			}
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Fatalf("alias %s was not surveyed at all", name)
+		}
+	}
+}
+
+// A model whose host reports no length carries a zero Alias.ContextLength,
+// so a caller can tell "unreported" from any real value.
+func TestAModelWithNoReportedLengthCarriesZero(t *testing.T) {
+	lmstudio := serve(t, map[string]string{
+		"/api/v0/models": `{"data":[{"id":"qwen/qwen3-8b","type":"llm","state":"loaded"}]}`,
+	})
+	r := New(LMStudio(lmstudio))
+	r.Survey()
+	families, _ := r.Models(false)
+	for _, f := range families {
+		for _, a := range f.Names {
+			if a.ContextLength != 0 {
+				t.Fatalf("alias %+v: want zero context length when the host reports none", a)
+			}
+		}
+	}
+}
+
 func TestLiveRequiresAnExplicitRealtimeHost(t *testing.T) {
 	for _, h := range []*Host{LMStudio("http://127.0.0.1:1"), NewHosted("ordinary", "http://127.0.0.1:1", WireOpenAICompatible, "")} {
 		if slices.Contains(h.HostProfiles(), ProfileLive) {

@@ -79,10 +79,10 @@ pub mod service_error_code {
     pub const INVALID_REQUEST: &str = "invalid_request";
     pub const CALLER_REFUSED: &str = "caller_refused";
     pub const UNKNOWN_OPERATION: &str = "unknown_operation";
-    pub const POLICY_UNAVAILABLE: &str = "policy_unavailable";
+    pub const UNAVAILABLE: &str = "unavailable";
     pub const FORBIDDEN: &str = "forbidden";
     /// Every name this definition declares, in declaration order.
-    pub const ALL: [&str; 12] = [HANDLER_ERROR, INVALID_RESULT, UNKNOWN_VERSION, UNKNOWN_SERVICE, UNKNOWN_METHOD, WRONG_MODE, INTERNAL, INVALID_REQUEST, CALLER_REFUSED, UNKNOWN_OPERATION, POLICY_UNAVAILABLE, FORBIDDEN];
+    pub const ALL: [&str; 12] = [HANDLER_ERROR, INVALID_RESULT, UNKNOWN_VERSION, UNKNOWN_SERVICE, UNKNOWN_METHOD, WRONG_MODE, INTERNAL, INVALID_REQUEST, CALLER_REFUSED, UNKNOWN_OPERATION, UNAVAILABLE, FORBIDDEN];
 }
 
 pub const PROFILES: [&str; 5] = ["chat", "embed", "transcription", "speech", "image"];
@@ -93,7 +93,7 @@ pub const WIRE_KINDS: [&str; 9] = ["openai-compatible", "anthropic-messages", "d
 
 pub const CREDENTIAL_CONSUMERS: [&str; 1] = ["abstraction.router/router@1"];
 
-pub const ROUTER_ERROR_CODES: [&str; 6] = ["internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"];
+pub const ROUTER_ERROR_CODES: [&str; 6] = ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostAllowance {
@@ -126,7 +126,14 @@ pub struct Observation {
 /// hosted is true for a name read from a hosted host's model listing; such a
 /// name is never resident. profiles are what the host's own model metadata says
 /// this name serves (LM Studio's type, Ollama's capabilities); empty when the
-/// host reports none, and then its HostState profiles apply.
+/// host reports none, and then its HostState profiles apply. held_in names the
+/// storage inventory stores holding an object this alias's own name or digest
+/// matches, in store order; empty when no store's object matches this name.
+/// host is empty exactly for a name no host serves, which a store holds and
+/// which is never resident or servable. context_length is the model's context
+/// window in tokens, read from the host's own metadata without loading it (LM
+/// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
+/// max_context_window); zero when the host reports none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Alias {
     pub host: String,
@@ -135,12 +142,42 @@ pub struct Alias {
     pub servable: bool,
     pub hosted: bool,
     pub profiles: Vec<String>,
+    pub held_in: Vec<String>,
+    pub context_length: i64,
 }
 
+/// One role-bearing object a store holds, folded into a family's detail rather
+/// than listed as a family of its own (abstraction.model/descriptor@1
+/// MODEL-C3): store is the holder, role is projector, vae, or another value a
+/// storage inventory source's descriptor names, and name is the store's own
+/// name for the object when it named one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Component {
+    pub store: String,
+    pub role: String,
+    pub name: String,
+}
+
+/// held_in names the storage inventory stores holding an object of this family,
+/// in store order, whether or not a host serves it; empty when no store reports
+/// one. A family whose names are all unservable is on this machine and answered
+/// by nothing. family_source is descriptor when the storage inventory published
+/// an abstraction.model/descriptor@1 naming this family, and alias when no
+/// descriptor names it and a program's own name for the model is the family;
+/// empty when the service reports neither. components lists a projector, VAE or
+/// other role-bearing object a store holds and this family's descriptor named
+/// as its base, or, when no descriptor could derive a base for it, an object
+/// that is this family's only content — held_in and family_source cover the
+/// family it was folded into or the family it stands in for either way;
+/// components exists to say the family answers for a part, not a whole model,
+/// when that is what it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Family {
     pub family: String,
     pub names: Vec<Alias>,
+    pub held_in: Vec<String>,
+    pub family_source: String,
+    pub components: Vec<Component>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1155,6 +1192,8 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
     let mut field_servable: bool = Default::default();
     let mut field_hosted: bool = Default::default();
     let mut field_profiles: Vec<String> = Default::default();
+    let mut field_held_in: Vec<String> = Default::default();
+    let mut field_context_length: i64 = Default::default();
     let mut seen: u32 = 0;
     r.skip_ws();
     if r.at() != b'}' {
@@ -1213,6 +1252,20 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
                     seen |= 32;
                     field_profiles = r.str_list()?;
                 }
+                "held_in" => {
+                    if seen & 64 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 64;
+                    field_held_in = r.str_list()?;
+                }
+                "context_length" => {
+                    if seen & 128 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 128;
+                    field_context_length = r.integer(i64::MIN, i64::MAX)?;
+                }
                 _ => {
                     r.skip_value()?;
                 }
@@ -1239,6 +1292,80 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
         servable: field_servable,
         hosted: field_hosted,
         profiles: field_profiles,
+        held_in: field_held_in,
+        context_length: field_context_length,
+    })
+}
+
+fn decode_component(r: &mut Reader) -> Result<Component, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_store: String = Default::default();
+    let mut field_role: String = Default::default();
+    let mut field_name: String = Default::default();
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "store" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_store = r.string()?;
+                }
+                "role" => {
+                    if seen & 2 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 2;
+                    field_role = r.string()?;
+                }
+                "name" => {
+                    if seen & 4 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 4;
+                    field_name = r.string()?;
+                }
+                _ => {
+                    r.skip_value()?;
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 3 != 3 {
+        return r.refuse("missing_field");
+    }
+    Ok(Component {
+        store: field_store,
+        role: field_role,
+        name: field_name,
     })
 }
 
@@ -1250,6 +1377,9 @@ fn decode_family(r: &mut Reader) -> Result<Family, Refusal> {
     r.pos += 1;
     let mut field_family: String = Default::default();
     let mut field_names: Vec<Alias> = Default::default();
+    let mut field_held_in: Vec<String> = Default::default();
+    let mut field_family_source: String = Default::default();
+    let mut field_components: Vec<Component> = Default::default();
     let mut seen: u32 = 0;
     r.skip_ws();
     if r.at() != b'}' {
@@ -1280,6 +1410,27 @@ fn decode_family(r: &mut Reader) -> Result<Family, Refusal> {
                     seen |= 2;
                     field_names = decode_list(r, decode_alias)?;
                 }
+                "held_in" => {
+                    if seen & 4 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 4;
+                    field_held_in = r.str_list()?;
+                }
+                "family_source" => {
+                    if seen & 8 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 8;
+                    field_family_source = r.string()?;
+                }
+                "components" => {
+                    if seen & 16 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 16;
+                    field_components = decode_list(r, decode_component)?;
+                }
                 _ => {
                     r.skip_value()?;
                 }
@@ -1302,6 +1453,9 @@ fn decode_family(r: &mut Reader) -> Result<Family, Refusal> {
     Ok(Family {
         family: field_family,
         names: field_names,
+        held_in: field_held_in,
+        family_source: field_family_source,
+        components: field_components,
     })
 }
 
@@ -2567,8 +2721,8 @@ pub trait Router {
     /// Read model families and aliases. Fresh requests survey the existing
     /// hosts.
     fn models(&self, fresh: bool) -> Result<ModelsSnapshot, Self::Error>;
-    /// Read host residency, duplicate families and routing audit. GPU cost is
-    /// outside this subset.
+    /// Read host residency, duplicate families and routing audit. Who holds the
+    /// card is abstraction.resource/table@1, outside this subset.
     fn hosts(&self, fresh: bool) -> Result<HostsSnapshot, Self::Error>;
     /// Choose a permitted host without loading any model. Missing allowance
     /// permits all hosts; an explicit empty allowance permits none. Attribution

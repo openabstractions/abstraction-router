@@ -25,7 +25,7 @@ public:
     std::size_t offset;
 };
 
-inline const std::vector<std::string> kServiceErrorCodeNames = {"handler_error", "invalid_result", "unknown_version", "unknown_service", "unknown_method", "wrong_mode", "internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"};
+inline const std::vector<std::string> kServiceErrorCodeNames = {"handler_error", "invalid_result", "unknown_version", "unknown_service", "unknown_method", "wrong_mode", "internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"};
 inline constexpr std::string_view kServiceErrorCodeHandlerError = "handler_error";
 inline constexpr std::string_view kServiceErrorCodeInvalidResult = "invalid_result";
 inline constexpr std::string_view kServiceErrorCodeUnknownVersion = "unknown_version";
@@ -36,7 +36,7 @@ inline constexpr std::string_view kServiceErrorCodeInternal = "internal";
 inline constexpr std::string_view kServiceErrorCodeInvalidRequest = "invalid_request";
 inline constexpr std::string_view kServiceErrorCodeCallerRefused = "caller_refused";
 inline constexpr std::string_view kServiceErrorCodeUnknownOperation = "unknown_operation";
-inline constexpr std::string_view kServiceErrorCodePolicyUnavailable = "policy_unavailable";
+inline constexpr std::string_view kServiceErrorCodeUnavailable = "unavailable";
 inline constexpr std::string_view kServiceErrorCodeForbidden = "forbidden";
 
 inline const std::vector<std::string> kProfiles = {"chat", "embed", "transcription", "speech", "image"};
@@ -47,7 +47,7 @@ inline const std::vector<std::string> kWireKinds = {"openai-compatible", "anthro
 
 inline const std::vector<std::string> kCredentialConsumers = {"abstraction.router/router@1"};
 
-inline const std::vector<std::string> kRouterErrorCodes = {"internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"};
+inline const std::vector<std::string> kRouterErrorCodes = {"internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"};
 
 struct HostAllowance {
     std::vector<std::string> hosts;
@@ -76,7 +76,14 @@ struct Observation {
 // hosted is true for a name read from a hosted host's model listing; such a
 // name is never resident. profiles are what the host's own model metadata says
 // this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply.
+// host reports none, and then its HostState profiles apply. held_in names the
+// storage inventory stores holding an object this alias's own name or digest
+// matches, in store order; empty when no store's object matches this name. host
+// is empty exactly for a name no host serves, which a store holds and which is
+// never resident or servable. context_length is the model's context window in
+// tokens, read from the host's own metadata without loading it (LM Studio's
+// max_context_length, Ollama's model_info context_length, Lemonade's
+// max_context_window); zero when the host reports none.
 struct Alias {
     std::string host;
     std::string name;
@@ -84,11 +91,40 @@ struct Alias {
     bool servable = false;
     bool hosted = false;
     std::vector<std::string> profiles;
+    std::vector<std::string> held_in;
+    std::int64_t context_length = 0;
 };
 
+// One role-bearing object a store holds, folded into a family's detail rather
+// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
+// store is the holder, role is projector, vae, or another value a storage
+// inventory source's descriptor names, and name is the store's own name for the
+// object when it named one.
+struct Component {
+    std::string store;
+    std::string role;
+    std::string name;
+};
+
+// held_in names the storage inventory stores holding an object of this family,
+// in store order, whether or not a host serves it; empty when no store reports
+// one. A family whose names are all unservable is on this machine and answered
+// by nothing. family_source is descriptor when the storage inventory published
+// an abstraction.model/descriptor@1 naming this family, and alias when no
+// descriptor names it and a program's own name for the model is the family;
+// empty when the service reports neither. components lists a projector, VAE or
+// other role-bearing object a store holds and this family's descriptor named as
+// its base, or, when no descriptor could derive a base for it, an object that
+// is this family's only content — held_in and family_source cover the family
+// it was folded into or the family it stands in for either way; components
+// exists to say the family answers for a part, not a whole model, when that is
+// what it is.
 struct Family {
     std::string family;
     std::vector<Alias> names;
+    std::vector<std::string> held_in;
+    std::string family_source;
+    std::vector<Component> components;
 };
 
 struct ModelsSnapshot {
@@ -352,6 +388,7 @@ inline void enc_pick_request(std::string&, const PickRequest&, int);
 inline void enc_caller(std::string&, const Caller&, int);
 inline void enc_observation(std::string&, const Observation&, int);
 inline void enc_alias(std::string&, const Alias&, int);
+inline void enc_component(std::string&, const Component&, int);
 inline void enc_family(std::string&, const Family&, int);
 inline void enc_models_snapshot(std::string&, const ModelsSnapshot&, int);
 inline void enc_host_state(std::string&, const HostState&, int);
@@ -498,6 +535,48 @@ inline void enc_alias(std::string& out, const Alias& v, int depth) {
         out += ": ";
         strs(out, v.profiles, depth + 1);
     }
+    if (!v.held_in.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "held_in");
+        out += ": ";
+        strs(out, v.held_in, depth + 1);
+    }
+    if (v.context_length != 0) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "context_length");
+        out += ": ";
+        num(out, v.context_length);
+    }
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_component(std::string& out, const Component& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "store");
+    out += ": ";
+    esc(out, v.store);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "role");
+    out += ": ";
+    esc(out, v.role);
+    if (!v.name.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "name");
+        out += ": ";
+        esc(out, v.name);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -516,6 +595,30 @@ inline void enc_family(std::string& out, const Family& v, int depth) {
     esc(out, "names");
     out += ": ";
     enc_list<Alias>(out, v.names, depth + 1, enc_alias);
+    if (!v.held_in.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "held_in");
+        out += ": ";
+        strs(out, v.held_in, depth + 1);
+    }
+    if (!v.family_source.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "family_source");
+        out += ": ";
+        esc(out, v.family_source);
+    }
+    if (!v.components.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "components");
+        out += ": ";
+        enc_list<Component>(out, v.components, depth + 1, enc_component);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1367,6 +1470,7 @@ inline PickRequest decode_pick_request(Reader& r);
 inline Caller decode_caller(Reader& r);
 inline Observation decode_observation(Reader& r);
 inline Alias decode_alias(Reader& r);
+inline Component decode_component(Reader& r);
 inline Family decode_family(Reader& r);
 inline ModelsSnapshot decode_models_snapshot(Reader& r);
 inline HostState decode_host_state(Reader& r);
@@ -1588,6 +1692,14 @@ inline Alias decode_alias(Reader& r) {
                 if (seen & 32u) r.refuse("duplicate_field");
                 seen |= 32u;
                 v.profiles = r.str_list();
+            } else if (key == "held_in") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.held_in = r.str_list();
+            } else if (key == "context_length") {
+                if (seen & 128u) r.refuse("duplicate_field");
+                seen |= 128u;
+                v.context_length = r.integer(INT64_MIN, INT64_MAX);
             } else {
                 r.skip_value();
             }
@@ -1600,6 +1712,49 @@ inline Alias decode_alias(Reader& r) {
     ++r.pos;
     --r.depth;
     if ((seen & 15u) != 15u) r.refuse("missing_field");
+    return v;
+}
+
+inline Component decode_component(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    Component v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "store") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.store = r.str();
+            } else if (key == "role") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.role = r.str();
+            } else if (key == "name") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.name = r.str();
+            } else {
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 3u) != 3u) r.refuse("missing_field");
     return v;
 }
 
@@ -1627,6 +1782,18 @@ inline Family decode_family(Reader& r) {
                 if (seen & 2u) r.refuse("duplicate_field");
                 seen |= 2u;
                 v.names = decode_list<Alias>(r, decode_alias);
+            } else if (key == "held_in") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.held_in = r.str_list();
+            } else if (key == "family_source") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.family_source = r.str();
+            } else if (key == "components") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.components = decode_list<Component>(r, decode_component);
             } else {
                 r.skip_value();
             }

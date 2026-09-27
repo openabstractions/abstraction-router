@@ -8,7 +8,7 @@ import (
 
 	identity "github.com/openabstractions/abstraction-identity"
 	"github.com/openabstractions/abstraction-identity/listen"
-	modelid "github.com/openabstractions/abstraction-model/go/identity"
+	modelid "github.com/openabstractions/abstraction-model/identity"
 )
 
 func serve(t *testing.T, routes map[string]string) string {

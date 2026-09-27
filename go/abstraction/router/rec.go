@@ -210,29 +210,29 @@ func encList[T any](out []byte, v []T, depth int, enc func([]byte, *T, int) []by
 type ServiceErrorCode string
 
 const (
-	ServiceErrorCodeHandlerError      ServiceErrorCode = "handler_error"
-	ServiceErrorCodeInvalidResult     ServiceErrorCode = "invalid_result"
-	ServiceErrorCodeUnknownVersion    ServiceErrorCode = "unknown_version"
-	ServiceErrorCodeUnknownService    ServiceErrorCode = "unknown_service"
-	ServiceErrorCodeUnknownMethod     ServiceErrorCode = "unknown_method"
-	ServiceErrorCodeWrongMode         ServiceErrorCode = "wrong_mode"
-	ServiceErrorCodeInternal          ServiceErrorCode = "internal"
-	ServiceErrorCodeInvalidRequest    ServiceErrorCode = "invalid_request"
-	ServiceErrorCodeCallerRefused     ServiceErrorCode = "caller_refused"
-	ServiceErrorCodeUnknownOperation  ServiceErrorCode = "unknown_operation"
-	ServiceErrorCodePolicyUnavailable ServiceErrorCode = "policy_unavailable"
-	ServiceErrorCodeForbidden         ServiceErrorCode = "forbidden"
+	ServiceErrorCodeHandlerError     ServiceErrorCode = "handler_error"
+	ServiceErrorCodeInvalidResult    ServiceErrorCode = "invalid_result"
+	ServiceErrorCodeUnknownVersion   ServiceErrorCode = "unknown_version"
+	ServiceErrorCodeUnknownService   ServiceErrorCode = "unknown_service"
+	ServiceErrorCodeUnknownMethod    ServiceErrorCode = "unknown_method"
+	ServiceErrorCodeWrongMode        ServiceErrorCode = "wrong_mode"
+	ServiceErrorCodeInternal         ServiceErrorCode = "internal"
+	ServiceErrorCodeInvalidRequest   ServiceErrorCode = "invalid_request"
+	ServiceErrorCodeCallerRefused    ServiceErrorCode = "caller_refused"
+	ServiceErrorCodeUnknownOperation ServiceErrorCode = "unknown_operation"
+	ServiceErrorCodeUnavailable      ServiceErrorCode = "unavailable"
+	ServiceErrorCodeForbidden        ServiceErrorCode = "forbidden"
 )
 
 // ServiceErrorCodeValues returns every member of ServiceErrorCode in declaration order, in a new slice.
 func ServiceErrorCodeValues() []ServiceErrorCode {
-	return []ServiceErrorCode{ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodePolicyUnavailable, ServiceErrorCodeForbidden}
+	return []ServiceErrorCode{ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodeUnavailable, ServiceErrorCodeForbidden}
 }
 
 // Known reports whether v is a member of ServiceErrorCode.
 func (v ServiceErrorCode) Known() bool {
 	switch v {
-	case ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodePolicyUnavailable, ServiceErrorCodeForbidden:
+	case ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodeUnavailable, ServiceErrorCodeForbidden:
 		return true
 	}
 	return false
@@ -246,7 +246,7 @@ var WireKinds = []string{"openai-compatible", "anthropic-messages", "deepgram-pr
 
 var CredentialConsumers = []string{"abstraction.router/router@1"}
 
-var RouterErrorCodes = []string{"internal", "invalid_request", "caller_refused", "unknown_operation", "policy_unavailable", "forbidden"}
+var RouterErrorCodes = []string{"internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"}
 
 type HostAllowance struct {
 	Hosts []string
@@ -275,19 +275,55 @@ type Observation struct {
 // hosted is true for a name read from a hosted host's model listing; such a
 // name is never resident. profiles are what the host's own model metadata says
 // this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply.
+// host reports none, and then its HostState profiles apply. held_in names the
+// storage inventory stores holding an object this alias's own name or digest
+// matches, in store order; empty when no store's object matches this name. host
+// is empty exactly for a name no host serves, which a store holds and which is
+// never resident or servable. context_length is the model's context window in
+// tokens, read from the host's own metadata without loading it (LM Studio's
+// max_context_length, Ollama's model_info context_length, Lemonade's
+// max_context_window); zero when the host reports none.
 type Alias struct {
-	Host     string
-	Name     string
-	Resident bool
-	Servable bool
-	Hosted   bool
-	Profiles []string
+	Host          string
+	Name          string
+	Resident      bool
+	Servable      bool
+	Hosted        bool
+	Profiles      []string
+	HeldIn        []string
+	ContextLength int64
 }
 
+// One role-bearing object a store holds, folded into a family's detail rather
+// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
+// store is the holder, role is projector, vae, or another value a storage
+// inventory source's descriptor names, and name is the store's own name for the
+// object when it named one.
+type Component struct {
+	Store string
+	Role  string
+	Name  string
+}
+
+// held_in names the storage inventory stores holding an object of this family,
+// in store order, whether or not a host serves it; empty when no store reports
+// one. A family whose names are all unservable is on this machine and answered
+// by nothing. family_source is descriptor when the storage inventory published
+// an abstraction.model/descriptor@1 naming this family, and alias when no
+// descriptor names it and a program's own name for the model is the family;
+// empty when the service reports neither. components lists a projector, VAE or
+// other role-bearing object a store holds and this family's descriptor named as
+// its base, or, when no descriptor could derive a base for it, an object that
+// is this family's only content — held_in and family_source cover the family
+// it was folded into or the family it stands in for either way; components
+// exists to say the family answers for a part, not a whole model, when that is
+// what it is.
 type Family struct {
-	Family string
-	Names  []Alias
+	Family       string
+	Names        []Alias
+	HeldIn       []string
+	FamilySource string
+	Components   []Component
 }
 
 type ModelsSnapshot struct {
@@ -551,6 +587,48 @@ func encAlias(out []byte, v *Alias, depth int) []byte {
 		out = append(out, ':', ' ')
 		out = strs(out, v.Profiles, depth+1)
 	}
+	if len(v.HeldIn) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "held_in")
+		out = append(out, ':', ' ')
+		out = strs(out, v.HeldIn, depth+1)
+	}
+	if v.ContextLength != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "context_length")
+		out = append(out, ':', ' ')
+		out = num(out, v.ContextLength)
+	}
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encComponent(out []byte, v *Component, depth int) []byte {
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "store")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Store)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "role")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Role)
+	if v.Name != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "name")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Name)
+	}
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -569,6 +647,30 @@ func encFamily(out []byte, v *Family, depth int) []byte {
 	out = esc(out, "names")
 	out = append(out, ':', ' ')
 	out = encList(out, v.Names, depth+1, encAlias)
+	if len(v.HeldIn) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "held_in")
+		out = append(out, ':', ' ')
+		out = strs(out, v.HeldIn, depth+1)
+	}
+	if v.FamilySource != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "family_source")
+		out = append(out, ':', ' ')
+		out = esc(out, v.FamilySource)
+	}
+	if len(v.Components) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "components")
+		out = append(out, ':', ' ')
+		out = encList(out, v.Components, depth+1, encComponent)
+	}
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -2111,6 +2213,26 @@ func (r *reader) decodeAlias() (*Alias, error) {
 					return nil, err
 				}
 				v.Profiles = x
+			case "held_in":
+				if seen&64 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 64
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.HeldIn = x
+			case "context_length":
+				if seen&128 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 128
+				x, err := r.integer(-9223372036854775808, 9223372036854775807)
+				if err != nil {
+					return nil, err
+				}
+				v.ContextLength = x
 			default:
 				if err := r.skipValue(); err != nil {
 					return nil, err
@@ -2129,6 +2251,87 @@ func (r *reader) decodeAlias() (*Alias, error) {
 	r.pos++
 	r.depth--
 	if seen&15 != 15 {
+		return nil, r.refuse("missing_field")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeComponent() (*Component, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &Component{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "store":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Store = x
+			case "role":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Role = x
+			case "name":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Name = x
+			default:
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&3 != 3 {
 		return nil, r.refuse("missing_field")
 	}
 	return v, nil
@@ -2182,6 +2385,36 @@ func (r *reader) decodeFamily() (*Family, error) {
 					return nil, err
 				}
 				v.Names = x
+			case "held_in":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.HeldIn = x
+			case "family_source":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.FamilySource = x
+			case "components":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := decodeList(r, (*reader).decodeComponent)
+				if err != nil {
+					return nil, err
+				}
+				v.Components = x
 			default:
 				if err := r.skipValue(); err != nil {
 					return nil, err
@@ -3702,8 +3935,17 @@ func DescribeEndpoint(frame []byte, program, version string, services ...Describ
 	for i, service := range services {
 		contract, ready, why := service.DescribeService()
 		readiness := "ready"
-		if !ready {
+		if ready {
+			why = ""
+		} else {
 			readiness = "not_ready"
+		}
+		var guarantees []string
+		var capabilities map[string]string
+		if described, ok := service.(interface {
+			DescribeServiceMetadata() ([]string, map[string]string)
+		}); ok {
+			guarantees, capabilities = described.DescribeServiceMetadata()
 		}
 		if i > 0 {
 			out = append(out, ',')
@@ -3712,7 +3954,23 @@ func DescribeEndpoint(frame []byte, program, version string, services ...Describ
 		out = esc(out, contract)
 		out = append(out, ",\"readiness\":\""+readiness+"\",\"why\":"...)
 		out = esc(out, why)
-		out = append(out, ",\"guarantees\":[],\"capabilities\":{}}"...)
+		out = append(out, ",\"guarantees\":["...)
+		for j, guarantee := range guarantees {
+			if j > 0 {
+				out = append(out, ',')
+			}
+			out = esc(out, guarantee)
+		}
+		out = append(out, "],\"capabilities\":{"...)
+		for j, key := range sortedKeys(capabilities) {
+			if j > 0 {
+				out = append(out, ',')
+			}
+			out = esc(out, key)
+			out = append(out, ':')
+			out = esc(out, capabilities[key])
+		}
+		out = append(out, "}}"...)
 	}
 	return serviceReply(v, Raw(append(out, "]}}"...)), nil)
 }
@@ -3903,6 +4161,17 @@ func (d *RouterDispatcher) DescribeService() (contract string, ready bool, why s
 		return "abstraction.router/router@1", ready, why
 	}
 	return "abstraction.router/router@1", true, ""
+}
+
+// DescribeServiceMetadata returns optional handler display facts for Describe.
+// They grant no authority and do not change service admission.
+func (d *RouterDispatcher) DescribeServiceMetadata() (guarantees []string, capabilities map[string]string) {
+	if h, ok := d.Handler.(interface {
+		DescribeMetadata() ([]string, map[string]string)
+	}); ok {
+		return h.DescribeMetadata()
+	}
+	return nil, nil
 }
 
 // ServiceContract is the wire name ServeEndpoint routes this dispatcher's frames by.

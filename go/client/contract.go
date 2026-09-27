@@ -14,6 +14,8 @@ type Ask = wire.Ask
 
 type Caller = wire.Caller
 
+type Component = wire.Component
+
 type Decision = wire.Decision
 
 type Family = wire.Family
@@ -25,18 +27,18 @@ type Observation = wire.Observation
 type ServiceErrorCode = wire.ServiceErrorCode
 
 const (
-	ServiceErrorCodeHandlerError      = wire.ServiceErrorCodeHandlerError
-	ServiceErrorCodeInvalidResult     = wire.ServiceErrorCodeInvalidResult
-	ServiceErrorCodeUnknownVersion    = wire.ServiceErrorCodeUnknownVersion
-	ServiceErrorCodeUnknownService    = wire.ServiceErrorCodeUnknownService
-	ServiceErrorCodeUnknownMethod     = wire.ServiceErrorCodeUnknownMethod
-	ServiceErrorCodeWrongMode         = wire.ServiceErrorCodeWrongMode
-	ServiceErrorCodeInternal          = wire.ServiceErrorCodeInternal
-	ServiceErrorCodeInvalidRequest    = wire.ServiceErrorCodeInvalidRequest
-	ServiceErrorCodeCallerRefused     = wire.ServiceErrorCodeCallerRefused
-	ServiceErrorCodeUnknownOperation  = wire.ServiceErrorCodeUnknownOperation
-	ServiceErrorCodePolicyUnavailable = wire.ServiceErrorCodePolicyUnavailable
-	ServiceErrorCodeForbidden         = wire.ServiceErrorCodeForbidden
+	ServiceErrorCodeHandlerError     = wire.ServiceErrorCodeHandlerError
+	ServiceErrorCodeInvalidResult    = wire.ServiceErrorCodeInvalidResult
+	ServiceErrorCodeUnknownVersion   = wire.ServiceErrorCodeUnknownVersion
+	ServiceErrorCodeUnknownService   = wire.ServiceErrorCodeUnknownService
+	ServiceErrorCodeUnknownMethod    = wire.ServiceErrorCodeUnknownMethod
+	ServiceErrorCodeWrongMode        = wire.ServiceErrorCodeWrongMode
+	ServiceErrorCodeInternal         = wire.ServiceErrorCodeInternal
+	ServiceErrorCodeInvalidRequest   = wire.ServiceErrorCodeInvalidRequest
+	ServiceErrorCodeCallerRefused    = wire.ServiceErrorCodeCallerRefused
+	ServiceErrorCodeUnknownOperation = wire.ServiceErrorCodeUnknownOperation
+	ServiceErrorCodeUnavailable      = wire.ServiceErrorCodeUnavailable
+	ServiceErrorCodeForbidden        = wire.ServiceErrorCodeForbidden
 )
 
 // ServiceErrorCodeValues returns every member of ServiceErrorCode in declaration order, in a new slice.

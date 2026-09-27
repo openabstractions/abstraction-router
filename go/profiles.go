@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -88,37 +90,98 @@ func ollamaProfiles(capabilities []string) []string {
 	return out
 }
 
-// ollamaShow reads each model's capabilities once and keeps them while the
-// model stays listed.
-type ollamaShow struct {
-	mu    sync.Mutex
-	known map[string][]string
+// ollamaContextLength reads a model's context window in tokens from
+// /api/show's model_info (github.com/ollama/ollama server/routes.go): the key
+// named "<general.architecture>.context_length" when architecture is known,
+// otherwise the first key found ending ".context_length" so an unrecognised
+// architecture still reports its length. 0 when model_info names none.
+func ollamaContextLength(modelInfo map[string]any) int64 {
+	if arch, ok := modelInfo["general.architecture"].(string); ok && arch != "" {
+		if n, ok := modelInfo[arch+".context_length"].(float64); ok && n > 0 {
+			return int64(n)
+		}
+	}
+	var keys []string
+	for k := range modelInfo {
+		if strings.HasSuffix(k, ".context_length") {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if n, ok := modelInfo[k].(float64); ok && n > 0 {
+			return int64(n)
+		}
+	}
+	return 0
 }
 
-func (s *ollamaShow) profiles(h *Host, names []string) map[string][]string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// ollamaShow reads each model's capabilities and context length once, from
+// one /api/show call that loads nothing (it reads stored metadata, not model
+// weights), and keeps them while the model stays listed.
+type ollamaShow struct {
+	mu      sync.Mutex
+	known   map[string][]string
+	context map[string]int64
+}
+
+// ensure populates known and context for every name not already cached,
+// then drops any cached name no longer in names. Locked by the caller.
+func (s *ollamaShow) ensure(h *Host, names []string) {
 	if s.known == nil {
 		s.known = map[string][]string{}
 	}
-	out := map[string][]string{}
+	if s.context == nil {
+		s.context = map[string]int64{}
+	}
 	for _, name := range names {
-		if p, ok := s.known[name]; ok {
-			out[name] = p
+		if _, ok := s.known[name]; ok {
 			continue
 		}
 		var d struct {
-			Capabilities []string `json:"capabilities"`
+			Capabilities []string       `json:"capabilities"`
+			ModelInfo    map[string]any `json:"model_info"`
 		}
 		if err := post(h.Base+"/api/show", map[string]string{"model": name}, &d); err != nil || d.Capabilities == nil {
 			continue
 		}
 		s.known[name] = ollamaProfiles(d.Capabilities)
-		out[name] = s.known[name]
+		if n := ollamaContextLength(d.ModelInfo); n > 0 {
+			s.context[name] = n
+		}
 	}
 	for name := range s.known {
-		if _, listed := out[name]; !listed {
+		if !has(names, name) {
 			delete(s.known, name)
+			delete(s.context, name)
+		}
+	}
+}
+
+func (s *ollamaShow) profiles(h *Host, names []string) map[string][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensure(h, names)
+	out := map[string][]string{}
+	for _, name := range names {
+		if p, ok := s.known[name]; ok {
+			out[name] = p
+		}
+	}
+	return out
+}
+
+// contextLength is modelContextLength for the Ollama host: it shares
+// ensure's cache with profiles, so a survey that already read profiles for
+// these names sends no further /api/show call.
+func (s *ollamaShow) contextLength(h *Host, names []string) map[string]int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensure(h, names)
+	out := map[string]int64{}
+	for _, name := range names {
+		if n, ok := s.context[name]; ok {
+			out[name] = n
 		}
 	}
 	return out

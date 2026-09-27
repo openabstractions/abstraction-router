@@ -328,6 +328,7 @@ func ProbeFoundryLocal(env ProbeEnv) (Declaration, bool) {
 		}
 		return d, false
 	}
+	//unchecked: a failed parse leaves port zero, which the range check below already rejects
 	port, _ := strconv.Atoi(string(m[3]))
 	if port < 1 || port > 65535 {
 		d.Reason = "foundry service status: port out of range"
@@ -355,12 +356,17 @@ func Probe(env ProbeEnv) []Declaration {
 	return out
 }
 
-// Declared is the hosts the products on this machine declare, in preference
-// order: Lemonade and ComfyUI at their built-in addresses, and LM Studio,
-// Ollama, Docker Model Runner and Foundry Local where their records say.
+// Declared is the hosts whose own record on this machine says where they
+// listen, in preference order: LM Studio, Ollama, Docker Model Runner and
+// Foundry Local. A product that recorded nothing declares nothing here; its
+// documented default address is an installation declaration in the runtime's
+// registry, which Installed() is the source of.
 func Declared(env ProbeEnv) []*Host {
 	var hosts []*Host
-	for i, d := range Probe(env) {
+	for _, d := range Probe(env) {
+		if d.Source == "" || d.Source == "default" {
+			continue
+		}
 		var h *Host
 		switch d.Product {
 		case DeclaredByLMStudio:
@@ -372,15 +378,10 @@ func Declared(env ProbeEnv) []*Host {
 		case DeclaredByFoundryLocal:
 			h = FoundryLocal(d.Base)
 		default:
-			if i != 0 {
-				continue
-			}
-			h = Lemonade(d.Base)
+			continue
 		}
 		h.DeclaredBy = d.Product
 		hosts = append(hosts, h)
 	}
-	comfy := ComfyUI(ComfyUIDefaultBase)
-	comfy.DeclaredBy = DeclaredByDefault
-	return append(hosts, comfy)
+	return hosts
 }

@@ -23,13 +23,6 @@ func Remote(r *router.Router, caller listen.Seen) wire.Router {
 			return router.Response{}, &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller is not mapped"}
 		}
 		out := r.Answer(request, caller)
-		if out.Err() != nil {
-			code := out.Code
-			if code == "" {
-				code = router.CodeInternal
-			}
-			return out, &wire.ServiceError{Code: wire.ServiceErrorCode(code), Message: out.Error}
-		}
-		return out, nil
+		return out, providerResponseError(out)
 	})
 }

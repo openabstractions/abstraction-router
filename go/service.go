@@ -111,8 +111,8 @@ func (r *Router) Answer(req Request, caller listen.Seen) Response {
 		out.Models = fams
 		return took(at)
 	case OpResidency:
-		hosts, gpu, why, dbl, at := r.Residency(req.Fresh)
-		out.Hosts, out.GPU, out.GPUWhy, out.Doubled, out.Asked = hosts, gpu, why, dbl, r.Asked()
+		hosts, holders, why, dbl, at := r.Residency(req.Fresh)
+		out.Hosts, out.Holders, out.HoldersWhy, out.Doubled, out.Asked = hosts, holders, why, dbl, r.Asked()
 		return took(at)
 	case OpRoute:
 		if !caller.Bound {

@@ -108,13 +108,28 @@ func TestAMissingRecordYieldsTheDefault(t *testing.T) {
 	if len(f.logged) != 0 {
 		t.Fatalf("absent records logged %v", f.logged)
 	}
-	hosts := Declared(f.probeEnv("linux"))
+	// A machine whose products recorded nothing declares no host: the
+	// documented defaults are installation declarations, not a compiled-in
+	// list the router carries.
+	if hosts := Declared(f.probeEnv("linux")); len(hosts) != 0 {
+		t.Fatalf("declared hosts without a record %+v", hosts)
+	}
+	f.env = map[string]string{"OLLAMA_HOST": "127.0.0.1:9999"}
+	f.files = map[string]string{"/home/person/.lmstudio/.internal/http-server-config.json": `{"port":4321}`}
 	var names []string
-	for _, h := range hosts {
+	for _, h := range Declared(f.probeEnv("linux")) {
 		names = append(names, h.Name+"="+h.Base+"/"+h.DeclaredBy)
 	}
-	if strings.Join(names, " ") != "lemonade=http://127.0.0.1:13305/default lmstudio=http://127.0.0.1:1234/lmstudio ollama=http://127.0.0.1:11434/ollama comfyui=http://127.0.0.1:8188/default" {
+	if strings.Join(names, " ") != "lmstudio=http://127.0.0.1:4321/lmstudio ollama=http://127.0.0.1:9999/ollama" {
 		t.Fatalf("declared hosts %v", names)
+	}
+	// Installed stays the source of the four default declarations.
+	var installed []string
+	for _, h := range Installed() {
+		installed = append(installed, h.Name+"="+h.Base)
+	}
+	if strings.Join(installed, " ") != "lemonade=http://127.0.0.1:13305 lmstudio=http://127.0.0.1:1234 ollama=http://127.0.0.1:11434 comfyui=http://127.0.0.1:8188" {
+		t.Fatalf("installed defaults %v", installed)
 	}
 }
 
@@ -172,7 +187,7 @@ func TestNothingOpensAPortTheProductDidNotRecord(t *testing.T) {
 	if bases[stray.URL] || !bases[lmstudio.URL] {
 		t.Fatalf("declared bases %v", bases)
 	}
-	New(hosts[1], hosts[2]).Survey()
+	New(hosts...).Survey()
 	if recorded.Load() == 0 || unrecorded.Load() != 0 {
 		t.Fatalf("survey reached recorded %d, unrecorded %d", recorded.Load(), unrecorded.Load())
 	}

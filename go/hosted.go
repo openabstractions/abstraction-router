@@ -69,6 +69,19 @@ func (r *Router) applier() Applier {
 
 var hostedClient = &http.Client{Timeout: 10 * time.Second}
 
+// A hosted listing's credential was applied for its declared target. Refuse a
+// redirect before net/http can copy custom credential headers to another host.
+func hostedRequestClient(headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return hostedClient
+	}
+	copy := *hostedClient
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("hosted credential redirect refused")
+	}
+	return &copy
+}
+
 // Target is the lowercase host name of a base URL, the credential target.
 func Target(base string) string {
 	u, err := url.Parse(base)
@@ -145,7 +158,7 @@ func listArrayIDs(ctx context.Context, address string, headers map[string]string
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := hostedClient.Do(req)
+	resp, err := hostedRequestClient(headers).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("listing %s: unreachable", address)
 	}
@@ -176,7 +189,7 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := hostedClient.Do(req)
+	resp, err := hostedRequestClient(headers).Do(req)
 	if err != nil {
 		// The URL error names the address only; headers never enter an error.
 		return nil, fmt.Errorf("listing %s: unreachable", address)

@@ -14,6 +14,7 @@ export {
   newAlias,
   newAsk,
   newCaller,
+  newComponent,
   newDecision,
   newFamily,
   newHostAllowance,
