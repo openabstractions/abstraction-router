@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -43,26 +44,58 @@ type Host struct {
 	// for its wire. A model whose host reports its own profiles is judged by
 	// those instead.
 	Profiles []string
+	// profileModels names, per profile, the models the host's declaration
+	// serves for it (ScopeModels, ROUTE-D9); nil when the declaration names
+	// its models without profiles. It outranks the host's own metadata.
+	profileModels map[string][]string
+	// SupportedExtensions is the validated extension inventory of this exact
+	// provider registration, keyed by profile and extension key. An absent key
+	// means unsupported. It is set when a selected declaration becomes a host.
+	SupportedExtensions map[string]map[string]bool
+	// Preloads is true for a declared native provider that serves
+	// abstraction.inference/preload@1: it evaluates a chat request's prefix
+	// ahead of the request. The registration that makes the host sets it from
+	// the declaration's contracts.
+	Preloads bool
 	// Domain names the remote runtime an oa-remote@1 host is (remote.go).
-	Domain    string
-	remote    *remoteLink
-	native    *nativeLink
-	installed func(*Host) ([]string, error)
-	resident  func(*Host) ([]string, error)
-	listing   func(ctx context.Context, h *Host, headers map[string]string) ([]string, error)
+	Domain string
+	// windowAtLoad is true for a server that fixes its request window when a
+	// model loads (Lemonade's ctx_size). Its model maximum is no substitute
+	// for that window: an alias without a valid effective length makes its
+	// family's offered context unknown (ROUTE-D8).
+	windowAtLoad bool
+	remote       *remoteLink
+	native       *nativeLink
+	installed    func(context.Context, *Host) ([]string, error)
+	resident     func(context.Context, *Host) ([]string, error)
+	listing      func(ctx context.Context, h *Host, headers map[string]string) ([]string, error)
 	// modelProfiles reads the profiles of installed models from the host's own
 	// metadata; nil when the host reports none.
-	modelProfiles func(h *Host, names []string) map[string][]string
-	// modelContextLength reads each installed model's context window in
-	// tokens from the host's own metadata, without loading anything; nil when
-	// the host reports none, and a name it does carry but reports no length
-	// for is simply absent from the map.
-	modelContextLength func(h *Host, names []string) map[string]int64
+	modelProfiles func(ctx context.Context, h *Host, names []string) map[string][]string
+	// modelContexts reads theoretical and effective context observations in
+	// one host-owned metadata query, without loading anything.
+	modelContexts func(ctx context.Context, h *Host, names []string) map[string]modelContext
+	// modelMetadata reads related per-model facts in one host-owned query.
+	// Use this when separate projections would repeat or disagree on one probe.
+	modelMetadata func(ctx context.Context, h *Host, names []string) map[string]hostModelMetadata
 	// unload is the host's own mechanism for letting go of what it holds
 	// (unload.go); nil when it has none. The router never calls it: a route,
 	// an inventory read and a residency read all leave the host's weights
 	// where they are, and only a lease asked back reaches this field.
 	unload func(ctx context.Context, h *Host) error
+}
+
+// hostModelMetadata is one consistent host observation for a model.
+type hostModelMetadata struct {
+	profiles []string
+	context  modelContext
+}
+
+// modelContext carries independent theoretical and effective context values.
+// Zero means the corresponding host observation is unknown.
+type modelContext struct {
+	maximum   int64
+	effective int64
 }
 
 func (h *Host) Servable() bool { return h.Chat != "" }
@@ -101,7 +134,7 @@ func (h *Host) TranscriptionURL() string {
 	if !has(h.HostProfiles(), ProfileTranscription) {
 		return ""
 	}
-	if h.Wire == WireRemote {
+	if h.Wire == WireRemote || h.Wire == WireNative {
 		return "abstraction.inference/transcription@1"
 	}
 	if h.Wire == WireDeepgramPrerecorded || h.Name == "whispercpp" {
@@ -120,7 +153,7 @@ func (h *Host) SpeechURL() string {
 	if !has(h.HostProfiles(), ProfileSpeech) {
 		return ""
 	}
-	if h.Wire == WireRemote {
+	if h.Wire == WireRemote || h.Wire == WireNative {
 		return "abstraction.inference/speech@1"
 	}
 	if h.Wire == WireElevenLabsStream || h.Name == "piper" {
@@ -135,13 +168,14 @@ func (h *Host) SpeechURL() string {
 
 // SupportsSpeechFormat reports formats the selected backend can actually
 // produce. Piper's official server emits WAV; ElevenLabs mappings here are
-// limited to codecs expressible by speech@1.
+// limited to codecs expressible by speech@1. A remote runtime and a native
+// provider decide their own formats at their own admission.
 func (h *Host) SupportsSpeechFormat(format string) bool {
 	if h.SpeechURL() == "" {
 		return false
 	}
 	switch {
-	case h.Wire == WireRemote:
+	case h.Wire == WireRemote || h.Wire == WireNative:
 		return true
 	case h.Name == "piper":
 		return format == "wav"
@@ -158,7 +192,7 @@ func (h *Host) ImageURL() string {
 	if !has(h.HostProfiles(), ProfileImage) {
 		return ""
 	}
-	if h.Wire == WireRemote {
+	if h.Wire == WireRemote || h.Wire == WireNative || h.Wire == WireImageEngine {
 		return "abstraction.inference/image@1"
 	}
 	if h.Name == "comfyui" || h.Name == "swarmui" || h.Wire == WireStabilityV2Beta || h.Wire == WireFalQueue || h.Wire == WireReplicatePredictions {
@@ -173,40 +207,219 @@ func (h *Host) ImageURL() string {
 
 var client = &http.Client{Timeout: 2 * time.Second}
 
-func fetch(url string, into any) error {
-	resp, err := client.Get(url)
+func fetch(url string, into any) error { return fetchContext(context.Background(), url, into) }
+
+func fetchContext(ctx context.Context, url string, into any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return failedListing(AvailabilityConfiguration, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return failedListing(causeOf(err), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: %s", url, resp.Status)
+		return failedListing(statusCause(resp.StatusCode), fmt.Errorf("%s: %s", url, resp.Status))
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(into)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(into); err != nil {
+		return failedListing(AvailabilityMalformed, err)
+	}
+	return nil
 }
 
 // lemonadeModel is one entry of Lemonade's GET /api/v1/models listing.
 type lemonadeModel struct {
-	ID               string `json:"id"`
-	Checkpoint       string `json:"checkpoint"`
-	Downloaded       bool   `json:"downloaded"`
-	MaxContextWindow int64  `json:"max_context_window"`
+	ID               string          `json:"id"`
+	Checkpoint       string          `json:"checkpoint"`
+	CloudProvider    string          `json:"cloud_provider"`
+	Downloaded       bool            `json:"downloaded"`
+	MaxContextWindow int64           `json:"max_context_window"`
+	ContextLength    json.RawMessage `json:"context_length"`
 }
 
-func lemonadeList(h *Host) ([]lemonadeModel, error) {
+type lemonadeLoadedModel struct {
+	ModelName     string                     `json:"model_name"`
+	RecipeOptions map[string]json.RawMessage `json:"recipe_options"`
+}
+
+type lemonadeModelOptions struct {
+	ResolvedContextSize json.RawMessage `json:"resolved_ctx_size"`
+}
+
+const lemonadeOptionsConcurrency = 4
+
+func lemonadeList(ctx context.Context, h *Host) ([]lemonadeModel, error) {
 	var d struct {
 		Data []lemonadeModel `json:"data"`
 	}
-	if err := fetch(h.Base+"/api/v1/models", &d); err != nil {
+	if err := fetchContext(ctx, h.Base+"/api/v1/models", &d); err != nil {
 		return nil, err
 	}
 	return d.Data, nil
 }
 
+// lemonadeModelContexts keeps theoretical capacity separate from the context
+// Lemonade will use. Loaded models report their resident recipe's ctx_size;
+// unloaded models report the resolved context for their next load.
+func lemonadeModelContexts(ctx context.Context, h *Host, names []string) map[string]modelContext {
+	models, err := lemonadeList(ctx, h)
+	if err != nil {
+		return nil
+	}
+	var health struct {
+		All []lemonadeLoadedModel `json:"all_models_loaded"`
+	}
+	healthErr := fetchContext(ctx, h.Base+"/api/v1/health", &health)
+	if ctx.Err() != nil {
+		return nil
+	}
+	loaded := map[string]int64{}
+	loadedNames := map[string]struct{}{}
+	if healthErr == nil {
+		for _, model := range health.All {
+			loadedNames[model.ModelName] = struct{}{}
+			loaded[model.ModelName] = positiveJSONInteger(model.RecipeOptions["ctx_size"])
+		}
+	}
+	wanted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		wanted[name] = struct{}{}
+	}
+	out := map[string]modelContext{}
+	optionsModels := make([]lemonadeModel, 0, len(models))
+	optionModelIDs := map[string]struct{}{}
+	for _, model := range models {
+		if !model.Downloaded {
+			continue
+		}
+		value := modelContext{maximum: model.MaxContextWindow}
+		if model.CloudProvider != "" {
+			effective := positiveJSONInteger(model.ContextLength)
+			value.effective = validEffective(effective, model.MaxContextWindow)
+			if _, ok := wanted[model.ID]; ok {
+				out[model.ID] = value
+			}
+			if model.Checkpoint != "" {
+				if _, ok := wanted[model.Checkpoint]; ok {
+					out[model.Checkpoint] = value
+				}
+			}
+			continue
+		}
+		_, loadedByID := loadedNames[model.ID]
+		_, loadedByCheckpoint := loadedNames[model.Checkpoint]
+		switch {
+		case loadedByID:
+			value.effective = validEffective(loaded[model.ID], model.MaxContextWindow)
+		case model.Checkpoint != "" && loadedByCheckpoint:
+			value.effective = validEffective(loaded[model.Checkpoint], model.MaxContextWindow)
+		default:
+			_, wantedID := wanted[model.ID]
+			_, wantedCheckpoint := wanted[model.Checkpoint]
+			if wantedID || wantedCheckpoint {
+				if _, seen := optionModelIDs[model.ID]; !seen {
+					optionModelIDs[model.ID] = struct{}{}
+					optionsModels = append(optionsModels, model)
+				}
+			}
+		}
+		if _, ok := wanted[model.ID]; ok {
+			out[model.ID] = value
+		}
+		if model.Checkpoint != "" {
+			if _, ok := wanted[model.Checkpoint]; ok {
+				out[model.Checkpoint] = value
+			}
+		}
+	}
+	if healthErr == nil {
+		for name, contextSize := range loaded {
+			if _, ok := wanted[name]; !ok {
+				continue
+			}
+			if _, known := out[name]; !known {
+				out[name] = modelContext{effective: contextSize}
+			}
+		}
+	}
+	if healthErr != nil {
+		// Without a reliable loaded set, options describe the planned load but
+		// cannot identify a currently resident model's effective context.
+		return out
+	}
+	if len(optionsModels) == 0 {
+		return out
+	}
+	type optionResult struct {
+		model    lemonadeModel
+		resolved int64
+	}
+	workers := min(lemonadeOptionsConcurrency, len(optionsModels))
+	jobs := make(chan lemonadeModel, len(optionsModels))
+	results := make(chan optionResult, len(optionsModels))
+	for _, model := range optionsModels {
+		jobs <- model
+	}
+	close(jobs)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for model := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				var options lemonadeModelOptions
+				if fetchContext(ctx, h.Base+"/api/v1/models/"+url.PathEscape(model.ID)+"/options", &options) != nil {
+					continue
+				}
+				resolved := validEffective(positiveJSONInteger(options.ResolvedContextSize), model.MaxContextWindow)
+				results <- optionResult{model: model, resolved: resolved}
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	optionValues := map[string]modelContext{}
+	for result := range results {
+		optionValues[result.model.ID] = modelContext{maximum: result.model.MaxContextWindow, effective: result.resolved}
+	}
+	for _, model := range models {
+		if model.CloudProvider != "" {
+			continue
+		}
+		value, ok := optionValues[model.ID]
+		if !ok {
+			continue
+		}
+		if _, ok := wanted[model.ID]; ok {
+			out[model.ID] = value
+		}
+		if model.Checkpoint != "" {
+			if _, ok := wanted[model.Checkpoint]; ok {
+				out[model.Checkpoint] = value
+			}
+		}
+	}
+	return out
+}
+
+// validEffective is effective when it counts as a request limit: positive and
+// at most a positive maximum. It is 0 otherwise, which reads as unknown.
+// Every reader of an effective context length judges it here (ROUTE-D8).
+func validEffective(effective, maximum int64) int64 {
+	if effective <= 0 || maximum > 0 && effective > maximum {
+		return 0
+	}
+	return effective
+}
+
 func Lemonade(base string) *Host {
-	return &Host{Name: "lemonade", Base: base, Chat: "/api/v1/chat/completions",
-		installed: func(h *Host) ([]string, error) {
-			d, err := lemonadeList(h)
+	return &Host{Name: "lemonade", Base: base, Chat: "/api/v1/chat/completions", windowAtLoad: true,
+		installed: func(ctx context.Context, h *Host) ([]string, error) {
+			d, err := lemonadeList(ctx, h)
 			if err != nil {
 				return nil, err
 			}
@@ -221,26 +434,10 @@ func Lemonade(base string) *Host {
 			}
 			return out, nil
 		},
-		modelContextLength: func(h *Host, names []string) map[string]int64 {
-			d, err := lemonadeList(h)
-			if err != nil {
-				return nil
-			}
-			out := map[string]int64{}
-			for _, m := range d {
-				if m.MaxContextWindow <= 0 {
-					continue
-				}
-				if has(names, m.ID) {
-					out[m.ID] = m.MaxContextWindow
-				}
-				if m.Checkpoint != "" && has(names, m.Checkpoint) {
-					out[m.Checkpoint] = m.MaxContextWindow
-				}
-			}
-			return out
+		modelContexts: func(ctx context.Context, h *Host, names []string) map[string]modelContext {
+			return lemonadeModelContexts(ctx, h, names)
 		},
-		resident: func(h *Host) ([]string, error) {
+		resident: func(ctx context.Context, h *Host) ([]string, error) {
 			var d struct {
 				ModelLoaded string `json:"model_loaded"`
 				All         []struct {
@@ -248,7 +445,7 @@ func Lemonade(base string) *Host {
 					Loaded    bool   `json:"loaded"`
 				} `json:"all_models_loaded"`
 			}
-			if err := fetch(h.Base+"/api/v1/health", &d); err != nil {
+			if err := fetchContext(ctx, h.Base+"/api/v1/health", &d); err != nil {
 				return nil, fmt.Errorf("health:%s", err)
 			}
 			var out []string
@@ -261,7 +458,21 @@ func Lemonade(base string) *Host {
 				out = append(out, d.ModelLoaded)
 			}
 			return out, nil
-		}}
+		},
+		unload: unloadLemonade}
+}
+
+// positiveJSONInteger accepts only a positive integral JSON number. Invalid,
+// absent, zero and negative host reports all mean that the limit is unknown.
+func positiveJSONInteger(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var n int64
+	if json.Unmarshal(raw, &n) != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // lmStudioModel is one entry of LM Studio's GET /api/v0/models listing
@@ -274,16 +485,16 @@ type lmStudioModel struct {
 }
 
 func LMStudio(base string) *Host {
-	list := func(h *Host) ([]lmStudioModel, error) {
+	list := func(ctx context.Context, h *Host) ([]lmStudioModel, error) {
 		var d struct {
 			Data []lmStudioModel `json:"data"`
 		}
-		err := fetch(h.Base+"/api/v0/models", &d)
+		err := fetchContext(ctx, h.Base+"/api/v0/models", &d)
 		return d.Data, err
 	}
 	return &Host{Name: "lmstudio", Base: base, Chat: "/v1/chat/completions",
-		installed: func(h *Host) ([]string, error) {
-			d, err := list(h)
+		installed: func(ctx context.Context, h *Host) ([]string, error) {
+			d, err := list(ctx, h)
 			if err != nil {
 				return nil, err
 			}
@@ -295,8 +506,8 @@ func LMStudio(base string) *Host {
 			}
 			return out, nil
 		},
-		modelProfiles: func(h *Host, names []string) map[string][]string {
-			d, err := list(h)
+		modelProfiles: func(ctx context.Context, h *Host, names []string) map[string][]string {
+			d, err := list(ctx, h)
 			if err != nil {
 				return nil
 			}
@@ -308,21 +519,21 @@ func LMStudio(base string) *Host {
 			}
 			return out
 		},
-		modelContextLength: func(h *Host, names []string) map[string]int64 {
-			d, err := list(h)
+		modelContexts: func(ctx context.Context, h *Host, names []string) map[string]modelContext {
+			d, err := list(ctx, h)
 			if err != nil {
 				return nil
 			}
-			out := map[string]int64{}
+			out := map[string]modelContext{}
 			for _, m := range d {
 				if m.MaxContextLength > 0 && has(names, m.ID) {
-					out[m.ID] = m.MaxContextLength
+					out[m.ID] = modelContext{maximum: m.MaxContextLength}
 				}
 			}
 			return out
 		},
-		resident: func(h *Host) ([]string, error) {
-			d, err := list(h)
+		resident: func(ctx context.Context, h *Host) ([]string, error) {
+			d, err := list(ctx, h)
 			if err != nil {
 				return nil, err
 			}
@@ -338,13 +549,13 @@ func LMStudio(base string) *Host {
 }
 
 func Ollama(base string) *Host {
-	names := func(url string) ([]string, error) {
+	names := func(ctx context.Context, url string) ([]string, error) {
 		var d struct {
 			Models []struct {
 				Name string `json:"name"`
 			} `json:"models"`
 		}
-		if err := fetch(url, &d); err != nil {
+		if err := fetchContext(ctx, url, &d); err != nil {
 			return nil, err
 		}
 		var out []string
@@ -353,29 +564,27 @@ func Ollama(base string) *Host {
 		}
 		return out, nil
 	}
-	show := &ollamaShow{}
 	return &Host{Name: "ollama", Base: base, Chat: "/v1/chat/completions",
-		installed:          func(h *Host) ([]string, error) { return names(h.Base + "/api/tags") },
-		resident:           func(h *Host) ([]string, error) { return names(h.Base + "/api/ps") },
-		modelProfiles:      show.profiles,
-		modelContextLength: show.contextLength,
-		unload:             unloadOllama}
+		installed:     func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/tags") },
+		resident:      func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/ps") },
+		modelMetadata: ollamaModelMetadata,
+		unload:        unloadOllama}
 }
 
 // WhisperCPP is one explicitly configured whisper.cpp server. Its process
 // owns one model, addressed as whisper, and accepts WAV at /inference.
 func WhisperCPP(base string) *Host {
 	return &Host{Name: "whispercpp", Base: strings.TrimRight(base, "/"), Chat: "/inference", Profiles: []string{ProfileTranscription},
-		installed: func(*Host) ([]string, error) { return []string{"whisper"}, nil },
-		resident:  func(*Host) ([]string, error) { return []string{"whisper"}, nil }}
+		installed: func(context.Context, *Host) ([]string, error) { return []string{"whisper"}, nil },
+		resident:  func(context.Context, *Host) ([]string, error) { return []string{"whisper"}, nil }}
 }
 
 // Piper is one explicitly configured official Piper HTTP server. It owns one
 // synthesis model and emits WAV from POST /synthesize.
 func Piper(base string) *Host {
 	return &Host{Name: "piper", Base: strings.TrimRight(base, "/"), Chat: "/synthesize", Profiles: []string{ProfileSpeech},
-		installed: func(*Host) ([]string, error) { return []string{"piper"}, nil },
-		resident:  func(*Host) ([]string, error) { return []string{"piper"}, nil }}
+		installed: func(context.Context, *Host) ([]string, error) { return []string{"piper"}, nil },
+		resident:  func(context.Context, *Host) ([]string, error) { return []string{"piper"}, nil }}
 }
 
 // ComfyUI runs a graph, not a model, so no OpenAI-compatible endpoint can serve
@@ -383,9 +592,9 @@ func Piper(base string) *Host {
 // machine's weights are in its tree and an inventory that omits them is wrong.
 func ComfyUI(base string) *Host {
 	return &Host{Name: "comfyui", Base: strings.TrimRight(base, "/"), Chat: "/prompt", Profiles: []string{ProfileImage},
-		installed: func(h *Host) ([]string, error) {
+		installed: func(ctx context.Context, h *Host) ([]string, error) {
 			var folders []string
-			if err := fetch(h.Base+"/models", &folders); err != nil {
+			if err := fetchContext(ctx, h.Base+"/models", &folders); err != nil {
 				return nil, err
 			}
 			var mu sync.Mutex
@@ -396,7 +605,7 @@ func ComfyUI(base string) *Host {
 				go func(f string) {
 					defer wg.Done()
 					var files []string
-					if fetch(h.Base+"/models/"+f, &files) != nil {
+					if fetchContext(ctx, h.Base+"/models/"+f, &files) != nil {
 						return
 					}
 					mu.Lock()
@@ -440,9 +649,9 @@ type comfySystemStats struct {
 // this host's reading actually carries, unlike LM Studio's and Ollama's own
 // resident model lists (CONTRACT.md RES-T3 is about those; this reading has
 // no model name to report in its place).
-func comfyResident(h *Host) ([]string, error) {
+func comfyResident(ctx context.Context, h *Host) ([]string, error) {
 	var stats comfySystemStats
-	if err := fetch(h.Base+"/system_stats", &stats); err != nil {
+	if err := fetchContext(ctx, h.Base+"/system_stats", &stats); err != nil {
 		return nil, err
 	}
 	var held int64
@@ -460,8 +669,8 @@ func comfyResident(h *Host) ([]string, error) {
 // SwarmUI is one local generation host using its documented T2I API.
 func SwarmUI(base string) *Host {
 	return &Host{Name: "swarmui", Base: strings.TrimRight(base, "/"), Chat: "/API/GenerateText2Image", Profiles: []string{ProfileImage},
-		installed: func(*Host) ([]string, error) { return []string{"swarmui"}, nil },
-		resident:  func(*Host) ([]string, error) { return []string{"swarmui"}, nil }}
+		installed: func(context.Context, *Host) ([]string, error) { return []string{"swarmui"}, nil },
+		resident:  func(context.Context, *Host) ([]string, error) { return []string{"swarmui"}, nil }}
 }
 
 func has(xs []string, x string) bool {
@@ -477,13 +686,13 @@ func has(xs []string, x string) bool {
 // api and lists its models at api+"/models".
 func openAILocal(name, base, api string) *Host {
 	return &Host{Name: name, Base: strings.TrimRight(base, "/"), Chat: api + "/chat/completions",
-		installed: func(h *Host) ([]string, error) {
+		installed: func(ctx context.Context, h *Host) ([]string, error) {
 			var d struct {
 				Data []struct {
 					ID string `json:"id"`
 				} `json:"data"`
 			}
-			if err := fetch(h.Base+api+"/models", &d); err != nil {
+			if err := fetchContext(ctx, h.Base+api+"/models", &d); err != nil {
 				return nil, err
 			}
 			var out []string
@@ -494,7 +703,7 @@ func openAILocal(name, base, api string) *Host {
 			}
 			return out, nil
 		},
-		resident: func(*Host) ([]string, error) { return nil, nil }}
+		resident: func(context.Context, *Host) ([]string, error) { return nil, nil }}
 }
 
 // OpenAICompatible is a local server speaking OpenAI chat completions under
@@ -506,7 +715,7 @@ func OpenAICompatible(name, base, api string, models []string) *Host {
 	h := openAILocal(name, base, api)
 	if len(models) > 0 {
 		listed := append([]string(nil), models...)
-		h.installed = func(*Host) ([]string, error) { return append([]string(nil), listed...), nil }
+		h.installed = func(context.Context, *Host) ([]string, error) { return append([]string(nil), listed...), nil }
 	}
 	return h
 }

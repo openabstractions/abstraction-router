@@ -98,7 +98,7 @@ func Target(base string) string {
 // does not know is kept and listed up false with why unsupported_wire:<kind>.
 func NewHosted(name, base, wire, credential string) *Host {
 	h := &Host{Name: name, Base: strings.TrimRight(base, "/"), Hosted: true, Wire: wire, Credential: credential,
-		resident: func(*Host) ([]string, error) { return nil, nil }}
+		resident: func(context.Context, *Host) ([]string, error) { return nil, nil }}
 	switch wire {
 	case WireOpenAICompatible:
 		h.Chat = "/chat/completions"
@@ -160,17 +160,17 @@ func listArrayIDs(ctx context.Context, address string, headers map[string]string
 	}
 	resp, err := hostedRequestClient(headers).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("listing %s: unreachable", address)
+		return nil, failedListing(causeOf(err), fmt.Errorf("listing %s: unreachable", address))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("listing %s: %s", address, resp.Status)
+		return nil, failedListing(statusCause(resp.StatusCode), fmt.Errorf("listing %s: %s", address, resp.Status))
 	}
 	var models []struct {
 		ID string `json:"model_id"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&models) != nil {
-		return nil, fmt.Errorf("listing %s: unreadable", address)
+		return nil, failedListing(AvailabilityMalformed, fmt.Errorf("listing %s: unreadable", address))
 	}
 	out := make([]string, 0, len(models))
 	for _, model := range models {
@@ -192,11 +192,11 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 	resp, err := hostedRequestClient(headers).Do(req)
 	if err != nil {
 		// The URL error names the address only; headers never enter an error.
-		return nil, fmt.Errorf("listing %s: unreachable", address)
+		return nil, failedListing(causeOf(err), fmt.Errorf("listing %s: unreachable", address))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("listing %s: %s", address, resp.Status)
+		return nil, failedListing(statusCause(resp.StatusCode), fmt.Errorf("listing %s: %s", address, resp.Status))
 	}
 	var d struct {
 		Data []struct {
@@ -204,7 +204,7 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&d); err != nil {
-		return nil, fmt.Errorf("listing %s: unreadable", address)
+		return nil, failedListing(AvailabilityMalformed, fmt.Errorf("listing %s: unreadable", address))
 	}
 	out := make([]string, 0, len(d.Data))
 	for _, m := range d.Data {
@@ -216,28 +216,28 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 }
 
 // readHosted lists one hosted host, applying its credential for this request.
-func (r *Router) readHosted(h *Host) (installed []string, why string) {
+func (r *Router) readHosted(ctx context.Context, h *Host) (installed []string, why string, cause AvailabilityCause) {
 	if h.listing == nil {
-		return nil, "unsupported_wire:" + h.Wire
+		return nil, "unsupported_wire:" + h.Wire, AvailabilityConfiguration
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var headers map[string]string
 	// A remote runtime applies its own credential; none is applied here.
 	if h.Credential != "" && h.remote == nil {
 		apply := r.applier()
 		if apply == nil {
-			return nil, "credential:unavailable:" + h.Credential
+			return nil, "credential:unavailable:" + h.Credential, AvailabilityCredential
 		}
 		var err error
 		if headers, err = apply(ctx, CredentialConsumer, h.Credential, Target(h.Base)); err != nil {
-			return nil, CredentialReason(h.Credential, err)
+			return nil, CredentialReason(h.Credential, err), AvailabilityCredential
 		}
 	}
 	installed, err := h.listing(ctx, h, headers)
 	clear(headers)
 	if err != nil {
-		return nil, err.Error()
+		return nil, err.Error(), causeOf(err)
 	}
-	return installed, ""
+	return installed, "", ""
 }

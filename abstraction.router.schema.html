@@ -13,7 +13,7 @@
 <h1>Schema</h1>
 <p class="lead">Use this reference to inspect fields, methods, accepted values and failure outcomes. For setup and working examples, start with the <a href="reference.html">API guide</a>.</p>
 <p>Definition: <code>abstraction.router</code></p>
-<nav aria-label="Schema sections" class="meta"><a href="#service-Router">Router</a> · <a href="#types">Types</a> · <a href="#structs">Fields</a> · <a href="#constants">Constants</a> · <a href="#encoding">Encoding</a> · <a href="#refusals">Refusals</a></nav>
+<nav aria-label="Schema sections" class="meta"><a href="#service-Router">Router</a> · <a href="#types">Types</a> · <a href="#structs">Fields</a> · <a href="#enums">Enumerations</a> · <a href="#constants">Constants</a> · <a href="#encoding">Encoding</a> · <a href="#refusals">Refusals</a></nav>
 <h2 id="service-Router">Service <code>Router</code> <span class="tag">[DEF-S1]</span></h2>
 <p>Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router.</p>
 <p>Wire identity: <code>abstraction.router/router@1</code></p>
@@ -32,6 +32,10 @@
 <h3><code>Pick</code></h3><p><code>request-response</code> <code>PickResult</code></p><ul>
 <li>Argument 1: <code>PickRequest</code> <code>request</code> (required, including zero/false/empty)</li>
 </ul>
+<p>List the families a caller may ask for a profile, one name each and the conservative context, after the request&#39;s placement and answer reserve. Gated by abstraction.router/inventory.read.</p>
+<h3><code>Offer</code></h3><p><code>request-response</code> <code>OfferSnapshot</code></p><ul>
+<li>Argument 1: <code>OfferRequest</code> <code>request</code> (required, including zero/false/empty)</li>
+</ul>
 <h2 id="encoding">Encoding <span class="tag">[DEF-E1]</span></h2>
 <div class="wrap"><table>
 <thead><tr><th>setting</th><th>value</th><th>rule</th></tr></thead>
@@ -49,10 +53,10 @@
 <div class="wrap"><table>
 <thead><tr><th>kind</th><th>types</th></tr></thead>
 <tbody>
-<tr><td>built in</td><td><code>bool</code> <code>i64</code> <code>string</code></td></tr>
+<tr><td>built in</td><td><code>AvailabilityCause</code> <code>ContextSource</code> <code>OfferOutcome</code> <code>Placement</code> <code>bool</code> <code>i64</code> <code>string</code></td></tr>
 <tr><td>declared below</td><td><code>Caller</code> <code>Decision</code> <code>HostAllowance</code> <code>Observation</code></td></tr>
 <tr><td>container <span class="tag">[DEF-T3]</span></td><td><code>list&lt;string&gt;</code></td></tr>
-<tr><td>repeated record <span class="tag">[DEF-A9]</span></td><td><code>list&lt;Alias&gt;</code> <code>list&lt;Ask&gt;</code> <code>list&lt;Component&gt;</code> <code>list&lt;Family&gt;</code> <code>list&lt;HostState&gt;</code></td></tr>
+<tr><td>repeated record <span class="tag">[DEF-A9]</span></td><td><code>list&lt;Alias&gt;</code> <code>list&lt;Ask&gt;</code> <code>list&lt;Component&gt;</code> <code>list&lt;Family&gt;</code> <code>list&lt;HostState&gt;</code> <code>list&lt;Offer&gt;</code></td></tr>
 </tbody></table></div>
 <h3 id="named-types">Named types <span class="tag">[DEF-T2]</span></h3>
 <p class="meta">One spelling is written <span class="tag">[DEF-G2]</span> and a wider set is read <span class="tag">[DEF-G1]</span>; the width between them is the interoperability guarantee.</p>
@@ -110,6 +114,7 @@
 <tr><td>6</td><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 <tr><td>7</td><td><code>held_in</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 <tr><td>8</td><td><code>context_length</code></td><td><code>i64</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>9</td><td><code>effective_context_length</code></td><td><code>i64</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Component"><code>Component</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -157,6 +162,7 @@
 <tr><td>11</td><td><code>declared_by</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 <tr><td>12</td><td><code>profiles</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
 <tr><td>13</td><td><code>domain</code></td><td><code>string</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+<tr><td>14</td><td><code>availability_cause</code></td><td><code>AvailabilityCause</code></td><td>optional · omitted when absent</td><td>—</td></tr>
 </tbody></table></div>
 <h3 id="struct-Ask"><code>Ask</code></h3>
 <p class="meta">unknown fields <code>grant</code></p>
@@ -206,6 +212,85 @@
 <tr><td>1</td><td><code>observation</code></td><td><code>Observation</code></td><td>required</td><td>—</td></tr>
 <tr><td>2</td><td><code>decision</code></td><td><code>Decision</code></td><td>required</td><td>—</td></tr>
 </tbody></table></div>
+<h3 id="struct-OfferRequest"><code>OfferRequest</code></h3>
+<p class="meta">unknown fields <code>refuse</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>field</th><th>type</th><th>presence</th><th>named elsewhere</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>profile</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
+<tr><td>2</td><td><code>placement</code></td><td><code>Placement</code></td><td>required</td><td>—</td></tr>
+<tr><td>3</td><td><code>reserve</code></td><td><code>i64</code></td><td>required</td><td>—</td></tr>
+<tr><td>4</td><td><code>fresh</code></td><td><code>bool</code></td><td>required</td><td>—</td></tr>
+</tbody></table></div>
+<h3 id="struct-Offer"><code>Offer</code></h3>
+<p class="meta">unknown fields <code>grant</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>field</th><th>type</th><th>presence</th><th>named elsewhere</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>family</code></td><td><code>string</code></td><td>required</td><td>—</td></tr>
+<tr><td>2</td><td><code>names</code></td><td><code>list&lt;string&gt;</code></td><td>required</td><td>—</td></tr>
+<tr><td>3</td><td><code>servers</code></td><td><code>list&lt;string&gt;</code></td><td>required</td><td>—</td></tr>
+<tr><td>4</td><td><code>context</code></td><td><code>i64</code></td><td>required</td><td>—</td></tr>
+<tr><td>5</td><td><code>context_source</code></td><td><code>ContextSource</code></td><td>required</td><td>—</td></tr>
+<tr><td>6</td><td><code>input</code></td><td><code>i64</code></td><td>required</td><td>—</td></tr>
+<tr><td>7</td><td><code>unknown</code></td><td><code>list&lt;string&gt;</code></td><td>optional · omitted when zero</td><td>—</td></tr>
+</tbody></table></div>
+<h3 id="struct-OfferSnapshot"><code>OfferSnapshot</code></h3>
+<p class="meta">unknown fields <code>grant</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>field</th><th>type</th><th>presence</th><th>named elsewhere</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>observation</code></td><td><code>Observation</code></td><td>required</td><td>—</td></tr>
+<tr><td>2</td><td><code>offers</code></td><td><code>list&lt;Offer&gt;</code></td><td>required</td><td>—</td></tr>
+<tr><td>3</td><td><code>outcome</code></td><td><code>OfferOutcome</code></td><td>required</td><td>—</td></tr>
+</tbody></table></div>
+<h2 id="enums">Enumerations <span class="tag">[DEF-T5]</span></h2>
+<p>Enum fields carry JSON strings containing exact member wire spellings, never numeric IDs. Unknown names are preserved with grant and refused as bad_enum with refuse on read and write. Optional absent fields preserve presence separately from an empty string.</p>
+<p class="meta">An enumeration is a closed vocabulary of wire names, and each one says on its own what a reader does with a member it has never heard of <span class="tag">[DEF-A5]</span>.</p>
+<h3 id="enum-AvailabilityCause"><code>AvailabilityCause</code></h3>
+<p class="meta">a member this reader does not know is <code>grant</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>member</th><th>wire</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>transport_unavailable</code></td><td><code>transport_unavailable</code></td></tr>
+<tr><td>2</td><td><code>credential</code></td><td><code>credential</code></td></tr>
+<tr><td>3</td><td><code>rights</code></td><td><code>rights</code></td></tr>
+<tr><td>4</td><td><code>configuration</code></td><td><code>configuration</code></td></tr>
+<tr><td>5</td><td><code>malformed</code></td><td><code>malformed</code></td></tr>
+<tr><td>6</td><td><code>unknown</code></td><td><code>unknown</code></td></tr>
+<tr><td>7</td><td><code>other</code></td><td><code>other</code></td></tr>
+</tbody></table></div>
+<h3 id="enum-Placement"><code>Placement</code></h3>
+<p class="meta">a member this reader does not know is <code>refuse</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>member</th><th>wire</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>local</code></td><td><code>local</code></td></tr>
+<tr><td>2</td><td><code>hosted</code></td><td><code>hosted</code></td></tr>
+<tr><td>3</td><td><code>any</code></td><td><code>any</code></td></tr>
+</tbody></table></div>
+<h3 id="enum-ContextSource"><code>ContextSource</code></h3>
+<p class="meta">a member this reader does not know is <code>grant</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>member</th><th>wire</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>effective</code></td><td><code>effective</code></td></tr>
+<tr><td>2</td><td><code>maximum</code></td><td><code>maximum</code></td></tr>
+<tr><td>3</td><td><code>default</code></td><td><code>default</code></td></tr>
+<tr><td>4</td><td><code>unknown</code></td><td><code>unknown</code></td></tr>
+<tr><td>5</td><td><code>none</code></td><td><code>none</code></td></tr>
+</tbody></table></div>
+<h3 id="enum-OfferOutcome"><code>OfferOutcome</code></h3>
+<p class="meta">a member this reader does not know is <code>refuse</code></p>
+<div class="wrap"><table>
+<thead><tr><th>id</th><th>member</th><th>wire</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>offered</code></td><td><code>offered</code></td></tr>
+<tr><td>2</td><td><code>invalid</code></td><td><code>invalid</code></td></tr>
+<tr><td>3</td><td><code>unavailable</code></td><td><code>unavailable</code></td></tr>
+<tr><td>4</td><td><code>forbidden</code></td><td><code>forbidden</code></td></tr>
+<tr><td>5</td><td><code>not_permitted</code></td><td><code>not_permitted</code></td></tr>
+</tbody></table></div>
 <h2 id="constants">Constants <span class="tag">[DEF-A6]</span></h2>
 <div class="wrap"><table>
 <thead><tr><th>name</th><th>type</th><th>value</th></tr></thead>
@@ -230,7 +315,8 @@
 <tr><td>8</td><td><code>duplicate_field</code></td><td><code>structure</code></td></tr>
 <tr><td>9</td><td><code>unknown_field</code></td><td><code>structure</code></td></tr>
 <tr><td>10</td><td><code>missing_field</code></td><td><code>structure</code></td></tr>
-<tr><td>11</td><td><code>trailing_bytes</code></td><td><code>document</code></td></tr>
+<tr><td>11</td><td><code>bad_enum</code></td><td><code>structure</code></td></tr>
+<tr><td>12</td><td><code>trailing_bytes</code></td><td><code>document</code></td></tr>
 </tbody></table></div>
 
 <footer>

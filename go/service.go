@@ -125,9 +125,28 @@ func (r *Router) Answer(req Request, caller listen.Seen) Response {
 		r.record(Ask{At: time.Now(), Caller: caller.Path, User: caller.User,
 			Model: req.Model, Family: d.Family, Verdict: d.Verdict, Host: d.Host})
 		return took(at)
+	case OpOffer:
+		if !validPlacement(req.Placement) {
+			out.Code = CodeInvalidRequest
+			out.Error = fmt.Sprintf("placement %q is none of %q, %q and %q", req.Placement, PlacementLocal, PlacementHosted, PlacementAny)
+			return took(time.Now())
+		}
+		if req.Reserve < 0 {
+			out.Code = CodeInvalidRequest
+			out.Error = fmt.Sprintf("reserve %d is negative", req.Reserve)
+			return took(time.Now())
+		}
+		offers, at, err := r.Offer(req)
+		if err != nil {
+			out.Code = CodeInternal
+			out.Error = err.Error()
+			return took(time.Now())
+		}
+		out.Offers = offers
+		return took(at)
 	}
 	out.Code = CodeUnknownOperation
-	out.Error = fmt.Sprintf("unknown op %q; this service answers %q, %q and %q and nothing else",
-		req.Op, OpModels, OpResidency, OpRoute)
+	out.Error = fmt.Sprintf("unknown op %q; this service answers %q, %q, %q and %q and nothing else",
+		req.Op, OpModels, OpResidency, OpRoute, OpOffer)
 	return took(time.Now())
 }

@@ -122,6 +122,13 @@ old id is retired, one per row, with the id that carries its content now:
 | `ROUTE-23` | ROUTE-D6 | merged: residency |
 | `ROUTE-24` | ROUTE-U1 | every routing decision is recorded in an audit |
 
+## Added ids
+
+- 2026-10-01: `ROUTE-D7` added; a family had listed a name two servers serve once, with the first server's host, the smaller context and either server's residency (UX1 follow-up 1).
+- 2026-10-09: `ROUTE-E3` gives the unpublished `Offer` method one typed outcome and keeps verified policy refusal `not_permitted` distinct from boundary refusal `forbidden` (vocabulary D86). Clients, remote folding, Panel and OpenCode check the outcome before consuming offers. Published `Models`, `Hosts` and `Pick` shapes retain their existing channel. `AvailabilityCause` adds `other` for an established cause outside the named vocabulary; `unknown` keeps its unestablished-cause meaning.
+- 2026-10-01: `ROUTE-D8` added with the `Offer` method, and `ROUTE-S4` extended to remote offers and remote alias contexts. OpenCode's plugin (`adopters/opencode/inventory.js`) and `openabstractions opencode configure` (`serve/opencode.go`) each carried a copy of the family-context fold, held together by a shared case table; remote families reached both with zero lengths and a fabricated 32,768 default. The fold now has one owner, and both consumers keep only their OpenCode projection (`research/opencode-inventory/DECISION.md`).
+- 2026-10-01: `ROUTE-D9` added; `ROUTE-D8` cites it for which profile an alias serves. A native declaration's models served every profile it listed, so once the Lemonade declaration named `Whisper-Large-v3-Turbo` and `kokoro-v1` beside its picture model, an `image@1` request naming `kokoro-v1` passed the router and the provider's admission and reached Lemonade's image route. The router also answered no transcription or speech address for a native host, and inference routed native audio around it (`feedback/speech-provider-2026-10-01.md` follow-ups 1 and 2). Declarations now scope an entry as `<profile>:<model>`, following the registry's `PROFILE:OWNER/NAME` spelling of a supported extension; an entry without a declared profile keeps its old reading. The same day's review (of 48d44c5b7) found a remote with one profiled and one unprofiled alias reading `no_host` for the unprofiled alias's chat, because a reported profile on one name hid the remote's declared profiles from another; ROUTE-D9 now names who reports an alias's profiles and who falls back, and judges every alias by name. Entries are read against the served profiles, `chat` of a chat-only declaration included, by one parser (`DeclaredEntry`).
+
 ## Superseded: the error code, router review F8
 
 `router.thrift`'s `router_error_codes` listed `policy_unavailable`, spelled
@@ -153,6 +160,22 @@ call themselves a server and reserve "host" for an address
 dissent, recorded there. Full citations and dates:
 `research/reviews/router-2026-09-23.md` "Names against the platforms" and
 "Checks run".
+
+`Offer` (ROUTE-D8) folds per-server context the way OpenRouter's
+`/api/v1/models` folds endpoint windows into one model-level
+`context_length` while `/models/{id}/endpoints` keeps each endpoint's
+figure: a family answers one conservative number and its aliases keep
+their own. OpenAI's `GET /v1/models` carries no window, which is why the
+gateway's OpenAI-shaped listing stays name-only. LM Studio's
+`/api/v0/models` lists `max_context_length`, a maximum; Ollama separates
+`/api/show`'s `model_info` maximum from `/api/ps`'s loaded `context_length`;
+Lemonade reports `max_context_window`, the loaded recipe's `ctx_size` and
+`resolved_ctx_size` for the next load, and fixes the window at load.
+LiteLLM's `model_prices_and_context_window.json` is a table shipped with the
+client, which drifts from the server in front of it; an offer is an
+observation with an age instead. OpenCode's provider `limit.output` is the
+application's answer reserve, which is why `reserve` travels in the
+request. Sources and dates: `research/opencode-inventory/DECISION.md` §3.
 
 ## Measured
 

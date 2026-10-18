@@ -157,6 +157,38 @@ def _open_enum(cls, value):
         return value
 
 
+class AvailabilityCause(_StrEnum):
+    TRANSPORT_UNAVAILABLE = "transport_unavailable"
+    CREDENTIAL = "credential"
+    RIGHTS = "rights"
+    CONFIGURATION = "configuration"
+    MALFORMED = "malformed"
+    UNKNOWN = "unknown"
+    OTHER = "other"
+
+
+class Placement(_StrEnum):
+    LOCAL = "local"
+    HOSTED = "hosted"
+    ANY = "any"
+
+
+class ContextSource(_StrEnum):
+    EFFECTIVE = "effective"
+    MAXIMUM = "maximum"
+    DEFAULT = "default"
+    UNKNOWN = "unknown"
+    NONE = "none"
+
+
+class OfferOutcome(_StrEnum):
+    OFFERED = "offered"
+    INVALID = "invalid"
+    UNAVAILABLE = "unavailable"
+    FORBIDDEN = "forbidden"
+    NOT_PERMITTED = "not_permitted"
+
+
 class ServiceErrorCode(_StrEnum):
     HANDLER_ERROR = "handler_error"
     INVALID_RESULT = "invalid_result"
@@ -225,10 +257,15 @@ class Alias:
     storage inventory stores holding an object this alias's own name or digest
     matches, in store order; empty when no store's object matches this name.
     host is empty exactly for a name no host serves, which a store holds and
-    which is never resident or servable. context_length is the model's context
-    window in tokens, read from the host's own metadata without loading it (LM
-    Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-    max_context_window); zero when the host reports none."""
+    which is never resident or servable. context_length is the model's maximum
+    supported context window in tokens, read from host metadata without loading
+    it (LM Studio's max_context_length, Ollama's model_info context_length,
+    Lemonade's max_context_window); zero when the host reports none.
+    effective_context_length is a positive per-request context limit the host
+    currently reports: the loaded value when the model is resident, otherwise
+    its configured value when the host reports one (Lemonade's context_length);
+    zero when unknown. A nonpositive or contradictory effective value is
+    omitted."""
 
     host: str = ""
     name: str = ""
@@ -238,6 +275,7 @@ class Alias:
     profiles: list[str] = dataclasses.field(default_factory=list)
     held_in: list[str] = dataclasses.field(default_factory=list)
     context_length: int = 0
+    effective_context_length: int = 0
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -255,19 +293,20 @@ class Component:
 
 @dataclasses.dataclass(kw_only=True)
 class Family:
-    """held_in names the storage inventory stores holding an object of this family,
-    in store order, whether or not a host serves it; empty when no store reports
-    one. A family whose names are all unservable is on this machine and answered
-    by nothing. family_source is descriptor when the storage inventory published
-    an abstraction.model/descriptor@1 naming this family, and alias when no
-    descriptor names it and a program's own name for the model is the family;
-    empty when the service reports neither. components lists a projector, VAE or
-    other role-bearing object a store holds and this family's descriptor named
-    as its base, or, when no descriptor could derive a base for it, an object
-    that is this family's only content — held_in and family_source cover the
-    family it was folded into or the family it stands in for either way;
-    components exists to say the family answers for a part, not a whole model,
-    when that is what it is."""
+    """names lists one alias per server and name; a name two servers serve appears
+    twice, once per server. held_in names the storage inventory stores holding
+    an object of this family, in store order, whether or not a host serves it;
+    empty when no store reports one. A family whose names are all unservable is
+    on this machine and answered by nothing. family_source is descriptor when
+    the storage inventory published an abstraction.model/descriptor@1 naming
+    this family, and alias when no descriptor names it and a program's own name
+    for the model is the family; empty when the service reports neither.
+    components lists a projector, VAE or other role-bearing object a store holds
+    and this family's descriptor named as its base, or, when no descriptor could
+    derive a base for it, an object that is this family's only content —
+    held_in and family_source cover the family it was folded into or the family
+    it stands in for either way; components exists to say the family answers for
+    a part, not a whole model, when that is what it is."""
 
     family: str = ""
     names: list[Alias] = dataclasses.field(default_factory=list)
@@ -313,6 +352,7 @@ class HostState:
     declared_by: str = ""
     profiles: list[str] = dataclasses.field(default_factory=list)
     domain: str = ""
+    availability_cause: AvailabilityCause | None = None
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -356,6 +396,53 @@ class PickResult:
 
 
 @dataclasses.dataclass(kw_only=True)
+class OfferRequest:
+    """profile is a profiles member or <owner>/<name>@<n>; empty is chat. placement
+    local counts servers on this machine, hosted counts hosted servers and
+    remote runtimes, any counts both. reserve is the output budget in tokens the
+    caller plans to keep for the answer; 0 keeps none. fresh surveys the servers
+    first."""
+
+    profile: str = ""
+    placement: Placement | None = None
+    reserve: int = 0
+    fresh: bool = False
+
+
+@dataclasses.dataclass(kw_only=True)
+class Offer:
+    """names are the counted aliases in UTF-8 byte order; the first is the name to
+    ask for. servers are the servers counted, in preference order. context is
+    the smallest bound across the counted aliases, 0 when context_source is
+    unknown or none. context_source says where the smallest bound came from:
+    effective for a server-reported request limit, maximum for a model maximum,
+    default for the profile's catalogue default when no server reported a
+    length, unknown when a counted server fixes its window at load and reported
+    none, none for a profile without a context window. input is context minus
+    the request's reserve, 0 when nothing remains or context is 0. unknown names
+    the aliases whose server reported no usable request limit, as
+    <server>/<name>."""
+
+    family: str = ""
+    names: list[str] = dataclasses.field(default_factory=list)
+    servers: list[str] = dataclasses.field(default_factory=list)
+    context: int = 0
+    context_source: ContextSource | str = ""
+    input: int = 0
+    unknown: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(kw_only=True)
+class OfferSnapshot:
+    """Exactly offered carries observation and offers. Every refusal carries an
+    empty observation and no offers; it makes no model availability claim."""
+
+    observation: Observation = dataclasses.field(default_factory=Observation)
+    offers: list[Offer] = dataclasses.field(default_factory=list)
+    outcome: OfferOutcome | None = None
+
+
+@dataclasses.dataclass(kw_only=True)
 class _RouterModelsArguments:
     fresh: bool = False
 
@@ -368,6 +455,11 @@ class _RouterHostsArguments:
 @dataclasses.dataclass(kw_only=True)
 class _RouterPickArguments:
     request: PickRequest = dataclasses.field(default_factory=PickRequest)
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RouterOfferArguments:
+    request: OfferRequest = dataclasses.field(default_factory=OfferRequest)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -406,6 +498,11 @@ class _RouterHostsResult:
 @dataclasses.dataclass(kw_only=True)
 class _RouterPickResult:
     value: PickResult = dataclasses.field(default_factory=PickResult)
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RouterOfferResult:
+    value: OfferSnapshot = dataclasses.field(default_factory=OfferSnapshot)
 
 
 def _write_host_allowance(out, v, depth):
@@ -547,6 +644,13 @@ def _write_alias(out, v, depth):
         _esc(out, "context_length")
         out += b": "
         _num(out, v.context_length)
+    if v.effective_context_length != 0:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "effective_context_length")
+        out += b": "
+        _num(out, v.effective_context_length)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -635,6 +739,9 @@ def _write_models_snapshot(out, v, depth):
 
 
 def _write_host_state(out, v, depth):
+    if v.availability_cause is not None:
+        if not isinstance(v.availability_cause, str):
+            raise Refusal("wrong_type", 0)
     out += b"{"
     out += b"\n"
     _pad(out, depth + 1)
@@ -719,6 +826,13 @@ def _write_host_state(out, v, depth):
         _esc(out, "domain")
         out += b": "
         _esc(out, v.domain)
+    if v.availability_cause is not None:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "availability_cause")
+        out += b": "
+        _esc(out, v.availability_cause)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -893,6 +1007,113 @@ def _write_pick_result(out, v, depth):
     out += b"}"
 
 
+def _write_offer_request(out, v, depth):
+    _closed_enum(Placement, v.placement)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "profile")
+    out += b": "
+    _esc(out, v.profile)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "placement")
+    out += b": "
+    _esc(out, v.placement)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "reserve")
+    out += b": "
+    _num(out, v.reserve)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "fresh")
+    out += b": "
+    out += b"true" if v.fresh else b"false"
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_offer(out, v, depth):
+    if not isinstance(v.context_source, str):
+        raise Refusal("wrong_type", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "family")
+    out += b": "
+    _esc(out, v.family)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "names")
+    out += b": "
+    _strs(out, v.names, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "servers")
+    out += b": "
+    _strs(out, v.servers, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "context")
+    out += b": "
+    _num(out, v.context)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "context_source")
+    out += b": "
+    _esc(out, v.context_source)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "input")
+    out += b": "
+    _num(out, v.input)
+    if v.unknown:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "unknown")
+        out += b": "
+        _strs(out, v.unknown, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_offer_snapshot(out, v, depth):
+    _closed_enum(OfferOutcome, v.outcome)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "observation")
+    out += b": "
+    _write_observation(out, v.observation, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "offers")
+    out += b": "
+    _write_list(out, v.offers, depth + 1, _write_offer)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "outcome")
+    out += b": "
+    _esc(out, v.outcome)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
 def _write_oa_router_models_arguments(out, v, depth):
     out += b"{"
     out += b"\n"
@@ -924,6 +1145,18 @@ def _write_oa_router_pick_arguments(out, v, depth):
     _esc(out, "request")
     out += b": "
     _write_pick_request(out, v.request, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_oa_router_offer_arguments(out, v, depth):
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "request")
+    out += b": "
+    _write_offer_request(out, v.request, depth + 1)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1044,6 +1277,18 @@ def _write_oa_router_pick_result(out, v, depth):
     _esc(out, "value")
     out += b": "
     _write_pick_result(out, v.value, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_oa_router_offer_result(out, v, depth):
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "value")
+    out += b": "
+    _write_offer_snapshot(out, v.value, depth + 1)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1734,6 +1979,11 @@ def _read_alias(r):
                     raise r.refuse("duplicate_field")
                 seen |= 128
                 v.context_length = r.integer(-9223372036854775808, 9223372036854775807)
+            elif key == "effective_context_length":
+                if seen & 256:
+                    raise r.refuse("duplicate_field")
+                seen |= 256
+                v.effective_context_length = r.integer(-9223372036854775808, 9223372036854775807)
             else:
                 r.skip_value()
             r.ws()
@@ -1985,6 +2235,11 @@ def _read_host_state(r):
                     raise r.refuse("duplicate_field")
                 seen |= 4096
                 v.domain = r.string()
+            elif key == "availability_cause":
+                if seen & 8192:
+                    raise r.refuse("duplicate_field")
+                seen |= 8192
+                v.availability_cause = r.string()
             else:
                 r.skip_value()
             r.ws()
@@ -1997,6 +2252,8 @@ def _read_host_state(r):
     r.depth -= 1
     if seen & 127 != 127:
         raise r.refuse("missing_field")
+    if v.availability_cause is not None:
+        v.availability_cause = _open_enum(AvailabilityCause, v.availability_cause)
     return v
 
 
@@ -2256,6 +2513,187 @@ def _read_pick_result(r):
     return v
 
 
+def _read_offer_request(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = OfferRequest()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "profile":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.profile = r.string()
+            elif key == "placement":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.placement = r.string()
+            elif key == "reserve":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.reserve = r.integer(-9223372036854775808, 9223372036854775807)
+            elif key == "fresh":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.fresh = r.boolean()
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 15 != 15:
+        raise r.refuse("missing_field")
+    try:
+        v.placement = Placement(v.placement)
+    except ValueError:
+        raise r.refuse("bad_enum") from None
+    return v
+
+
+def _read_offer(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = Offer()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "family":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.family = r.string()
+            elif key == "names":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.names = r.str_list()
+            elif key == "servers":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.servers = r.str_list()
+            elif key == "context":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.context = r.integer(-9223372036854775808, 9223372036854775807)
+            elif key == "context_source":
+                if seen & 16:
+                    raise r.refuse("duplicate_field")
+                seen |= 16
+                v.context_source = r.string()
+            elif key == "input":
+                if seen & 32:
+                    raise r.refuse("duplicate_field")
+                seen |= 32
+                v.input = r.integer(-9223372036854775808, 9223372036854775807)
+            elif key == "unknown":
+                if seen & 64:
+                    raise r.refuse("duplicate_field")
+                seen |= 64
+                v.unknown = r.str_list()
+            else:
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 63 != 63:
+        raise r.refuse("missing_field")
+    v.context_source = _open_enum(ContextSource, v.context_source)
+    return v
+
+
+def _read_offer_snapshot(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = OfferSnapshot()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "observation":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.observation = _read_observation(r)
+            elif key == "offers":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.offers = _read_list(r, _read_offer)
+            elif key == "outcome":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.outcome = r.string()
+            else:
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 7 != 7:
+        raise r.refuse("missing_field")
+    try:
+        v.outcome = OfferOutcome(v.outcome)
+    except ValueError:
+        raise r.refuse("bad_enum") from None
+    return v
+
+
 def _read_oa_router_models_arguments(r):
     if r.at() != _LBRACE:
         raise r.refuse("wrong_type")
@@ -2358,6 +2796,45 @@ def _read_oa_router_pick_arguments(r):
                     raise r.refuse("duplicate_field")
                 seen |= 1
                 v.request = _read_pick_request(r)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1 != 1:
+        raise r.refuse("missing_field")
+    return v
+
+
+def _read_oa_router_offer_arguments(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterOfferArguments()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "request":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.request = _read_offer_request(r)
             else:
                 raise r.refuse("unknown_field")
             r.ws()
@@ -2647,6 +3124,45 @@ def _read_oa_router_pick_result(r):
     return v
 
 
+def _read_oa_router_offer_result(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterOfferResult()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "value":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.value = _read_offer_snapshot(r)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1 != 1:
+        raise r.refuse("missing_field")
+    return v
+
+
 def decode(data):
     r = _Reader(bytes(data))
     r.ws()
@@ -2659,7 +3175,7 @@ def decode(data):
 
 # _REFUSALS is in the order two of them are chosen between.
 
-_REFUSALS = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"]
+_REFUSALS = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"]
 
 
 def _refusal_rank(word):
@@ -2774,24 +3290,29 @@ _SERVICE_RECORDS = {
     "PickRequest": (PickRequest, [("model", "string", "never"), ("fresh", "bool", "never"), ("allowed", "HostAllowance", "absent"), ("profile", "string", "zero"), ]),
     "Caller": (Caller, [("user_description", "string", "never"), ("path_description", "string", "never"), ]),
     "Observation": (Observation, [("caller", "Caller", "never"), ("took_ms", "i64", "never"), ("cache_age_ms", "i64", "never"), ]),
-    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ("held_in", "list<string>", "zero"), ("context_length", "i64", "zero"), ]),
+    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ("held_in", "list<string>", "zero"), ("context_length", "i64", "zero"), ("effective_context_length", "i64", "zero"), ]),
     "Component": (Component, [("store", "string", "never"), ("role", "string", "never"), ("name", "string", "zero"), ]),
     "Family": (Family, [("family", "string", "never"), ("names", "list<Alias>", "never"), ("held_in", "list<string>", "zero"), ("family_source", "string", "zero"), ("components", "list<Component>", "zero"), ]),
     "ModelsSnapshot": (ModelsSnapshot, [("observation", "Observation", "never"), ("models", "list<Family>", "never"), ]),
-    "HostState": (HostState, [("host", "string", "never"), ("base", "string", "never"), ("up", "bool", "never"), ("why", "string", "never"), ("installed", "i64", "never"), ("resident", "list<string>", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("wire", "string", "zero"), ("credential", "string", "zero"), ("declared_by", "string", "zero"), ("profiles", "list<string>", "zero"), ("domain", "string", "zero"), ]),
+    "HostState": (HostState, [("host", "string", "never"), ("base", "string", "never"), ("up", "bool", "never"), ("why", "string", "never"), ("installed", "i64", "never"), ("resident", "list<string>", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("wire", "string", "zero"), ("credential", "string", "zero"), ("declared_by", "string", "zero"), ("profiles", "list<string>", "zero"), ("domain", "string", "zero"), ("availability_cause", "enum", "absent"), ]),
     "Ask": (Ask, [("at", "string", "never"), ("caller", "string", "never"), ("user", "string", "never"), ("model", "string", "never"), ("family", "string", "never"), ("verdict", "string", "never"), ("host", "string", "never"), ]),
     "HostsSnapshot": (HostsSnapshot, [("observation", "Observation", "never"), ("hosts", "list<HostState>", "never"), ("doubled", "list<string>", "never"), ("asked", "list<Ask>", "never"), ]),
     "Decision": (Decision, [("asked", "string", "never"), ("family", "string", "never"), ("verdict", "string", "never"), ("host", "string", "never"), ("model", "string", "never"), ("endpoint", "string", "never"), ("installed_on", "list<string>", "never"), ("authorised", "HostAllowance", "absent"), ("withheld", "list<string>", "never"), ("loads", "i64", "never"), ("why", "string", "never"), ]),
     "PickResult": (PickResult, [("observation", "Observation", "never"), ("decision", "Decision", "never"), ]),
+    "OfferRequest": (OfferRequest, [("profile", "string", "never"), ("placement", "enum", "never"), ("reserve", "i64", "never"), ("fresh", "bool", "never"), ]),
+    "Offer": (Offer, [("family", "string", "never"), ("names", "list<string>", "never"), ("servers", "list<string>", "never"), ("context", "i64", "never"), ("context_source", "enum", "never"), ("input", "i64", "never"), ("unknown", "list<string>", "zero"), ]),
+    "OfferSnapshot": (OfferSnapshot, [("observation", "Observation", "never"), ("offers", "list<Offer>", "never"), ("outcome", "enum", "never"), ]),
     "OARouterModelsArguments": (_RouterModelsArguments, [("fresh", "bool", "never"), ]),
     "OARouterHostsArguments": (_RouterHostsArguments, [("fresh", "bool", "never"), ]),
     "OARouterPickArguments": (_RouterPickArguments, [("request", "PickRequest", "never"), ]),
+    "OARouterOfferArguments": (_RouterOfferArguments, [("request", "OfferRequest", "never"), ]),
     "OAServiceFrame": (_ServiceFrame, [("version", "i32", "never"), ("service", "string", "never"), ("method", "string", "never"), ("arguments", "json", "never"), ]),
     "OAServiceReply": (_ServiceReply, [("version", "i32", "never"), ("service", "string", "never"), ("method", "string", "never"), ("ok", "bool", "never"), ("payload", "json", "never"), ]),
     "OAServiceError": (_ServiceError, [("code", "string", "never"), ("message", "string", "never"), ]),
     "OARouterModelsResult": (_RouterModelsResult, [("value", "ModelsSnapshot", "never"), ]),
     "OARouterHostsResult": (_RouterHostsResult, [("value", "HostsSnapshot", "never"), ]),
     "OARouterPickResult": (_RouterPickResult, [("value", "PickResult", "never"), ]),
+    "OARouterOfferResult": (_RouterOfferResult, [("value", "OfferSnapshot", "never"), ]),
 }
 
 
@@ -2813,6 +3334,12 @@ class Router:
         """Choose a permitted host without loading any model. Missing allowance
         permits all hosts; an explicit empty allowance permits none. Attribution
         comes from the bound caller."""
+        raise NotImplementedError
+
+    def offer(self, request: OfferRequest) -> OfferSnapshot:
+        """List the families a caller may ask for a profile, one name each and the
+        conservative context, after the request's placement and answer reserve.
+        Gated by abstraction.router/inventory.read."""
         raise NotImplementedError
 
 
@@ -2853,4 +3380,15 @@ class RouterClient(Router):
         _request = _service_request("abstraction.router/router@1", "Pick", _arguments)
         _payload = _service_response(self._transport.exchange_frame(_request), "abstraction.router/router@1", "Pick")
         _result = _service_decode(_read_oa_router_pick_result, _payload, 1)
+        return _result.value
+
+    def offer(self, request: OfferRequest) -> OfferSnapshot:
+        _service_check("OfferRequest", request)
+        _args = _RouterOfferArguments()
+        _args.request = request
+        _arguments = _service_encode(_write_oa_router_offer_arguments, _args, 1)
+        _service_decode(_read_oa_router_offer_arguments, _arguments, 1)
+        _request = _service_request("abstraction.router/router@1", "Offer", _arguments)
+        _payload = _service_response(self._transport.exchange_frame(_request), "abstraction.router/router@1", "Offer")
+        _result = _service_decode(_read_oa_router_offer_result, _payload, 1)
         return _result.value

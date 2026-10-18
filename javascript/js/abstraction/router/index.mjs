@@ -2,7 +2,11 @@
 
 // abstraction.router: generated contract types, vocabularies and service clients.
 export {
+  AvailabilityCause,
+  ContextSource,
   DispatchError,
+  OfferOutcome,
+  Placement,
   Refusal,
   RouterClient,
   RouterService,
@@ -22,6 +26,9 @@ export {
   newHostsSnapshot,
   newModelsSnapshot,
   newObservation,
+  newOffer,
+  newOfferRequest,
+  newOfferSnapshot,
   newPickRequest,
   newPickResult,
   profiles,

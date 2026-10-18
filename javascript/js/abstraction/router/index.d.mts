@@ -15,10 +15,14 @@ interface FrameTransport {
 // storage inventory stores holding an object this alias's own name or digest
 // matches, in store order; empty when no store's object matches this name. host
 // is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's context window in
-// tokens, read from the host's own metadata without loading it (LM Studio's
-// max_context_length, Ollama's model_info context_length, Lemonade's
+// never resident or servable. context_length is the model's maximum supported
+// context window in tokens, read from host metadata without loading it (LM
+// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
 // max_context_window); zero when the host reports none.
+// effective_context_length is a positive per-request context limit the host
+// currently reports: the loaded value when the model is resident, otherwise its
+// configured value when the host reports one (Lemonade's context_length); zero
+// when unknown. A nonpositive or contradictory effective value is omitted.
 export interface Alias {
   host: string;
   name: string;
@@ -28,6 +32,7 @@ export interface Alias {
   profiles: string[];
   heldIn: string[];
   contextLength: bigint;
+  effectiveContextLength: bigint;
 }
 
 export interface Ask {
@@ -39,6 +44,9 @@ export interface Ask {
   verdict: string;
   host: string;
 }
+
+export type AvailabilityCause = (typeof AvailabilityCause)[keyof typeof AvailabilityCause];
+export declare const AvailabilityCause: Readonly<{ TransportUnavailable: "transport_unavailable"; Credential: "credential"; Rights: "rights"; Configuration: "configuration"; Malformed: "malformed"; Unknown: "unknown"; Other: "other" }>;
 
 export interface Caller {
   userDescription: string;
@@ -55,6 +63,9 @@ export interface Component {
   role: string;
   name: string;
 }
+
+export type ContextSource = (typeof ContextSource)[keyof typeof ContextSource];
+export declare const ContextSource: Readonly<{ Effective: "effective"; Maximum: "maximum"; Default: "default"; Unknown: "unknown"; None: "none" }>;
 
 export interface Decision {
   asked: string;
@@ -75,19 +86,20 @@ export declare class DispatchError extends Error {
   code: string;
 }
 
-// held_in names the storage inventory stores holding an object of this family,
-// in store order, whether or not a host serves it; empty when no store reports
-// one. A family whose names are all unservable is on this machine and answered
-// by nothing. family_source is descriptor when the storage inventory published
-// an abstraction.model/descriptor@1 naming this family, and alias when no
-// descriptor names it and a program's own name for the model is the family;
-// empty when the service reports neither. components lists a projector, VAE or
-// other role-bearing object a store holds and this family's descriptor named as
-// its base, or, when no descriptor could derive a base for it, an object that
-// is this family's only content — held_in and family_source cover the family
-// it was folded into or the family it stands in for either way; components
-// exists to say the family answers for a part, not a whole model, when that is
-// what it is.
+// names lists one alias per server and name; a name two servers serve appears
+// twice, once per server. held_in names the storage inventory stores holding an
+// object of this family, in store order, whether or not a host serves it; empty
+// when no store reports one. A family whose names are all unservable is on this
+// machine and answered by nothing. family_source is descriptor when the storage
+// inventory published an abstraction.model/descriptor@1 naming this family, and
+// alias when no descriptor names it and a program's own name for the model is
+// the family; empty when the service reports neither. components lists a
+// projector, VAE or other role-bearing object a store holds and this family's
+// descriptor named as its base, or, when no descriptor could derive a base for
+// it, an object that is this family's only content — held_in and
+// family_source cover the family it was folded into or the family it stands in
+// for either way; components exists to say the family answers for a part, not a
+// whole model, when that is what it is.
 export interface Family {
   family: string;
   names: Alias[];
@@ -129,6 +141,7 @@ export interface HostState {
   declaredBy: string;
   profiles: string[];
   domain: string;
+  availabilityCause: AvailabilityCause | (string & {}) | null;
 }
 
 export interface HostsSnapshot {
@@ -149,6 +162,48 @@ export interface Observation {
   cacheAgeMs: bigint;
 }
 
+// names are the counted aliases in UTF-8 byte order; the first is the name to
+// ask for. servers are the servers counted, in preference order. context is the
+// smallest bound across the counted aliases, 0 when context_source is unknown
+// or none. context_source says where the smallest bound came from: effective
+// for a server-reported request limit, maximum for a model maximum, default for
+// the profile's catalogue default when no server reported a length, unknown
+// when a counted server fixes its window at load and reported none, none for a
+// profile without a context window. input is context minus the request's
+// reserve, 0 when nothing remains or context is 0. unknown names the aliases
+// whose server reported no usable request limit, as <server>/<name>.
+export interface Offer {
+  family: string;
+  names: string[];
+  servers: string[];
+  context: bigint;
+  contextSource: ContextSource | (string & {});
+  input: bigint;
+  unknown: string[];
+}
+
+export type OfferOutcome = (typeof OfferOutcome)[keyof typeof OfferOutcome];
+export declare const OfferOutcome: Readonly<{ Offered: "offered"; Invalid: "invalid"; Unavailable: "unavailable"; Forbidden: "forbidden"; NotPermitted: "not_permitted" }>;
+
+// profile is a profiles member or <owner>/<name>@<n>; empty is chat. placement
+// local counts servers on this machine, hosted counts hosted servers and remote
+// runtimes, any counts both. reserve is the output budget in tokens the caller
+// plans to keep for the answer; 0 keeps none. fresh surveys the servers first.
+export interface OfferRequest {
+  profile: string;
+  placement: Placement;
+  reserve: bigint;
+  fresh: boolean;
+}
+
+// Exactly offered carries observation and offers. Every refusal carries an
+// empty observation and no offers; it makes no model availability claim.
+export interface OfferSnapshot {
+  observation: Observation;
+  offers: Offer[];
+  outcome: OfferOutcome;
+}
+
 // profile is what the chosen host must serve the model for, a profiles member
 // or <owner>/<name>@<n>; empty is chat.
 export interface PickRequest {
@@ -163,9 +218,12 @@ export interface PickResult {
   decision: Decision;
 }
 
+export type Placement = (typeof Placement)[keyof typeof Placement];
+export declare const Placement: Readonly<{ Local: "local"; Hosted: "hosted"; Any: "any" }>;
+
 export declare class Refusal extends Error {
   constructor(word: string, offset: number);
-  word: "malformed" | "bad_string" | "number_spelling" | "wrong_type" | "bad_timestamp" | "depth_exceeded" | "duplicate_key" | "duplicate_field" | "unknown_field" | "missing_field" | "trailing_bytes";
+  word: "malformed" | "bad_string" | "number_spelling" | "wrong_type" | "bad_timestamp" | "depth_exceeded" | "duplicate_key" | "duplicate_field" | "unknown_field" | "missing_field" | "bad_enum" | "trailing_bytes";
   offset: number;
 }
 
@@ -178,6 +236,8 @@ export declare class RouterClient {
   hosts(fresh: boolean): Promise<HostsSnapshot>;
   /** Choose a permitted host without loading any model. Missing allowance permits all hosts; an explicit empty allowance permits none. Attribution comes from the bound caller. */
   pick(request: PickRequest): Promise<PickResult>;
+  /** List the families a caller may ask for a profile, one name each and the conservative context, after the request's placement and answer reserve. Gated by abstraction.router/inventory.read. */
+  offer(request: OfferRequest): Promise<OfferSnapshot>;
 }
 
 export declare const RouterService: Readonly<{ wireName: "abstraction.router/router@1"; Client: typeof RouterClient }>;
@@ -217,6 +277,12 @@ export declare function newHostsSnapshot(): HostsSnapshot;
 export declare function newModelsSnapshot(): ModelsSnapshot;
 
 export declare function newObservation(): Observation;
+
+export declare function newOffer(): Offer;
+
+export declare function newOfferRequest(): OfferRequest;
+
+export declare function newOfferSnapshot(): OfferSnapshot;
 
 export declare function newPickRequest(): PickRequest;
 

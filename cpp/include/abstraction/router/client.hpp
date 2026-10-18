@@ -52,6 +52,13 @@ public:
         RouterClient<ipc::FrameTransport> client(transport);
         return client.pick(request);
     }
+    OfferSnapshot offer(const OfferRequest& request) const {
+        auto transport = deadline_ ? ipc::FrameTransport(endpoint_, *deadline_, 1 << 20)
+                                   : ipc::FrameTransport(endpoint_, 10000, 1 << 20);
+        transport = transport.with_cancellation(cancellation_).with_server_expectation(server_);
+        RouterClient<ipc::FrameTransport> client(transport);
+        return client.offer(request);
+    }
     Client with_server_expectation(std::optional<ipc::ServerExpectation> server) const {auto copy=*this;copy.server_=std::move(server);return copy;}
  Client with_cancellation(ipc::CancellationToken token) const {
         auto scoped = *this;

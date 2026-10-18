@@ -25,6 +25,92 @@ public:
     std::size_t offset;
 };
 
+inline const std::vector<std::string> kAvailabilityCauseNames = {"transport_unavailable", "credential", "rights", "configuration", "malformed", "unknown", "other"};
+inline constexpr std::string_view kAvailabilityCauseTransportUnavailable = "transport_unavailable";
+inline constexpr std::string_view kAvailabilityCauseCredential = "credential";
+inline constexpr std::string_view kAvailabilityCauseRights = "rights";
+inline constexpr std::string_view kAvailabilityCauseConfiguration = "configuration";
+inline constexpr std::string_view kAvailabilityCauseMalformed = "malformed";
+inline constexpr std::string_view kAvailabilityCauseUnknown = "unknown";
+inline constexpr std::string_view kAvailabilityCauseOther = "other";
+
+enum class Placement : std::int32_t {
+    Local = 1,
+    Hosted = 2,
+    Any = 3,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(Placement value) {
+    switch (value) {
+        case Placement::Local: return "local";
+        case Placement::Hosted: return "hosted";
+        case Placement::Any: return "any";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<Placement> parse_placement(std::string_view name) {
+    if (name == "local") return Placement::Local;
+    if (name == "hosted") return Placement::Hosted;
+    if (name == "any") return Placement::Any;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(Placement value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(Placement value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, Placement value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, Placement value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kPlacementNames = {"local", "hosted", "any"};
+
+inline const std::vector<std::string> kContextSourceNames = {"effective", "maximum", "default", "unknown", "none"};
+inline constexpr std::string_view kContextSourceEffective = "effective";
+inline constexpr std::string_view kContextSourceMaximum = "maximum";
+inline constexpr std::string_view kContextSourceDefault = "default";
+inline constexpr std::string_view kContextSourceUnknown = "unknown";
+inline constexpr std::string_view kContextSourceNone = "none";
+
+enum class OfferOutcome : std::int32_t {
+    Offered = 1,
+    Invalid = 2,
+    Unavailable = 3,
+    Forbidden = 4,
+    NotPermitted = 5,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(OfferOutcome value) {
+    switch (value) {
+        case OfferOutcome::Offered: return "offered";
+        case OfferOutcome::Invalid: return "invalid";
+        case OfferOutcome::Unavailable: return "unavailable";
+        case OfferOutcome::Forbidden: return "forbidden";
+        case OfferOutcome::NotPermitted: return "not_permitted";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<OfferOutcome> parse_offer_outcome(std::string_view name) {
+    if (name == "offered") return OfferOutcome::Offered;
+    if (name == "invalid") return OfferOutcome::Invalid;
+    if (name == "unavailable") return OfferOutcome::Unavailable;
+    if (name == "forbidden") return OfferOutcome::Forbidden;
+    if (name == "not_permitted") return OfferOutcome::NotPermitted;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(OfferOutcome value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(OfferOutcome value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, OfferOutcome value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, OfferOutcome value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kOfferOutcomeNames = {"offered", "invalid", "unavailable", "forbidden", "not_permitted"};
+
 inline const std::vector<std::string> kServiceErrorCodeNames = {"handler_error", "invalid_result", "unknown_version", "unknown_service", "unknown_method", "wrong_mode", "internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"};
 inline constexpr std::string_view kServiceErrorCodeHandlerError = "handler_error";
 inline constexpr std::string_view kServiceErrorCodeInvalidResult = "invalid_result";
@@ -80,10 +166,14 @@ struct Observation {
 // storage inventory stores holding an object this alias's own name or digest
 // matches, in store order; empty when no store's object matches this name. host
 // is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's context window in
-// tokens, read from the host's own metadata without loading it (LM Studio's
-// max_context_length, Ollama's model_info context_length, Lemonade's
+// never resident or servable. context_length is the model's maximum supported
+// context window in tokens, read from host metadata without loading it (LM
+// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
 // max_context_window); zero when the host reports none.
+// effective_context_length is a positive per-request context limit the host
+// currently reports: the loaded value when the model is resident, otherwise its
+// configured value when the host reports one (Lemonade's context_length); zero
+// when unknown. A nonpositive or contradictory effective value is omitted.
 struct Alias {
     std::string host;
     std::string name;
@@ -93,6 +183,7 @@ struct Alias {
     std::vector<std::string> profiles;
     std::vector<std::string> held_in;
     std::int64_t context_length = 0;
+    std::int64_t effective_context_length = 0;
 };
 
 // One role-bearing object a store holds, folded into a family's detail rather
@@ -106,19 +197,20 @@ struct Component {
     std::string name;
 };
 
-// held_in names the storage inventory stores holding an object of this family,
-// in store order, whether or not a host serves it; empty when no store reports
-// one. A family whose names are all unservable is on this machine and answered
-// by nothing. family_source is descriptor when the storage inventory published
-// an abstraction.model/descriptor@1 naming this family, and alias when no
-// descriptor names it and a program's own name for the model is the family;
-// empty when the service reports neither. components lists a projector, VAE or
-// other role-bearing object a store holds and this family's descriptor named as
-// its base, or, when no descriptor could derive a base for it, an object that
-// is this family's only content — held_in and family_source cover the family
-// it was folded into or the family it stands in for either way; components
-// exists to say the family answers for a part, not a whole model, when that is
-// what it is.
+// names lists one alias per server and name; a name two servers serve appears
+// twice, once per server. held_in names the storage inventory stores holding an
+// object of this family, in store order, whether or not a host serves it; empty
+// when no store reports one. A family whose names are all unservable is on this
+// machine and answered by nothing. family_source is descriptor when the storage
+// inventory published an abstraction.model/descriptor@1 naming this family, and
+// alias when no descriptor names it and a program's own name for the model is
+// the family; empty when the service reports neither. components lists a
+// projector, VAE or other role-bearing object a store holds and this family's
+// descriptor named as its base, or, when no descriptor could derive a base for
+// it, an object that is this family's only content — held_in and
+// family_source cover the family it was folded into or the family it stands in
+// for either way; components exists to say the family answers for a part, not a
+// whole model, when that is what it is.
 struct Family {
     std::string family;
     std::vector<Alias> names;
@@ -161,6 +253,7 @@ struct HostState {
     std::string declared_by;
     std::vector<std::string> profiles;
     std::string domain;
+    std::optional<std::string> availability_cause;
 };
 
 struct Ask {
@@ -197,6 +290,45 @@ struct Decision {
 struct PickResult {
     Observation observation;
     Decision decision;
+};
+
+// profile is a profiles member or <owner>/<name>@<n>; empty is chat. placement
+// local counts servers on this machine, hosted counts hosted servers and remote
+// runtimes, any counts both. reserve is the output budget in tokens the caller
+// plans to keep for the answer; 0 keeps none. fresh surveys the servers first.
+struct OfferRequest {
+    std::string profile;
+    Placement placement{};
+    std::int64_t reserve = 0;
+    bool fresh = false;
+};
+
+// names are the counted aliases in UTF-8 byte order; the first is the name to
+// ask for. servers are the servers counted, in preference order. context is the
+// smallest bound across the counted aliases, 0 when context_source is unknown
+// or none. context_source says where the smallest bound came from: effective
+// for a server-reported request limit, maximum for a model maximum, default for
+// the profile's catalogue default when no server reported a length, unknown
+// when a counted server fixes its window at load and reported none, none for a
+// profile without a context window. input is context minus the request's
+// reserve, 0 when nothing remains or context is 0. unknown names the aliases
+// whose server reported no usable request limit, as <server>/<name>.
+struct Offer {
+    std::string family;
+    std::vector<std::string> names;
+    std::vector<std::string> servers;
+    std::int64_t context = 0;
+    std::string context_source;
+    std::int64_t input = 0;
+    std::vector<std::string> unknown;
+};
+
+// Exactly offered carries observation and offers. Every refusal carries an
+// empty observation and no offers; it makes no model availability claim.
+struct OfferSnapshot {
+    Observation observation;
+    std::vector<Offer> offers;
+    OfferOutcome outcome{};
 };
 
 // Codec machinery. Nothing here is API; it may change in any release.
@@ -352,6 +484,10 @@ struct OARouterPickArguments {
     PickRequest request;
 };
 
+struct OARouterOfferArguments {
+    OfferRequest request;
+};
+
 struct OAServiceFrame {
     std::int32_t version = 0;
     std::string service;
@@ -383,6 +519,10 @@ struct OARouterHostsResult {
 struct OARouterPickResult {
     PickResult value;
 };
+
+struct OARouterOfferResult {
+    OfferSnapshot value;
+};
 inline void enc_host_allowance(std::string&, const HostAllowance&, int);
 inline void enc_pick_request(std::string&, const PickRequest&, int);
 inline void enc_caller(std::string&, const Caller&, int);
@@ -396,15 +536,20 @@ inline void enc_ask(std::string&, const Ask&, int);
 inline void enc_hosts_snapshot(std::string&, const HostsSnapshot&, int);
 inline void enc_decision(std::string&, const Decision&, int);
 inline void enc_pick_result(std::string&, const PickResult&, int);
+inline void enc_offer_request(std::string&, const OfferRequest&, int);
+inline void enc_offer(std::string&, const Offer&, int);
+inline void enc_offer_snapshot(std::string&, const OfferSnapshot&, int);
 inline void enc_oa_router_models_arguments(std::string&, const OARouterModelsArguments&, int);
 inline void enc_oa_router_hosts_arguments(std::string&, const OARouterHostsArguments&, int);
 inline void enc_oa_router_pick_arguments(std::string&, const OARouterPickArguments&, int);
+inline void enc_oa_router_offer_arguments(std::string&, const OARouterOfferArguments&, int);
 inline void enc_oa_service_frame(std::string&, const OAServiceFrame&, int);
 inline void enc_oa_service_reply(std::string&, const OAServiceReply&, int);
 inline void enc_oa_service_error(std::string&, const OAServiceError&, int);
 inline void enc_oa_router_models_result(std::string&, const OARouterModelsResult&, int);
 inline void enc_oa_router_hosts_result(std::string&, const OARouterHostsResult&, int);
 inline void enc_oa_router_pick_result(std::string&, const OARouterPickResult&, int);
+inline void enc_oa_router_offer_result(std::string&, const OARouterOfferResult&, int);
 
 inline void enc_host_allowance(std::string& out, const HostAllowance& v, int depth) {
     out += '{';
@@ -550,6 +695,14 @@ inline void enc_alias(std::string& out, const Alias& v, int depth) {
         esc(out, "context_length");
         out += ": ";
         num(out, v.context_length);
+    }
+    if (v.effective_context_length != 0) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "effective_context_length");
+        out += ": ";
+        num(out, v.effective_context_length);
     }
     out += '\n';
     pad(out, depth);
@@ -733,6 +886,14 @@ inline void enc_host_state(std::string& out, const HostState& v, int depth) {
         out += ": ";
         esc(out, v.domain);
     }
+    if (v.availability_cause.has_value()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "availability_cause");
+        out += ": ";
+        esc(out, *v.availability_cause);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -908,6 +1069,112 @@ inline void enc_pick_result(std::string& out, const PickResult& v, int depth) {
     out += '}';
 }
 
+inline void enc_offer_request(std::string& out, const OfferRequest& v, int depth) {
+    if (wire_name(v.placement).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "profile");
+    out += ": ";
+    esc(out, v.profile);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "placement");
+    out += ": ";
+    esc(out, std::string(wire_name(v.placement)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "reserve");
+    out += ": ";
+    num(out, v.reserve);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "fresh");
+    out += ": ";
+    out += v.fresh ? "true" : "false";
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_offer(std::string& out, const Offer& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "family");
+    out += ": ";
+    esc(out, v.family);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "names");
+    out += ": ";
+    strs(out, v.names, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "servers");
+    out += ": ";
+    strs(out, v.servers, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "context");
+    out += ": ";
+    num(out, v.context);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "context_source");
+    out += ": ";
+    esc(out, v.context_source);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "input");
+    out += ": ";
+    num(out, v.input);
+    if (!v.unknown.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "unknown");
+        out += ": ";
+        strs(out, v.unknown, depth + 1);
+    }
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_offer_snapshot(std::string& out, const OfferSnapshot& v, int depth) {
+    if (wire_name(v.outcome).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "observation");
+    out += ": ";
+    enc_observation(out, v.observation, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "offers");
+    out += ": ";
+    enc_list<Offer>(out, v.offers, depth + 1, enc_offer);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "outcome");
+    out += ": ";
+    esc(out, std::string(wire_name(v.outcome)));
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
 inline void enc_oa_router_models_arguments(std::string& out, const OARouterModelsArguments& v, int depth) {
     out += '{';
     out += '\n';
@@ -939,6 +1206,18 @@ inline void enc_oa_router_pick_arguments(std::string& out, const OARouterPickArg
     esc(out, "request");
     out += ": ";
     enc_pick_request(out, v.request, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_oa_router_offer_arguments(std::string& out, const OARouterOfferArguments& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "request");
+    out += ": ";
+    enc_offer_request(out, v.request, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1059,6 +1338,18 @@ inline void enc_oa_router_pick_result(std::string& out, const OARouterPickResult
     esc(out, "value");
     out += ": ";
     enc_pick_result(out, v.value, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_oa_router_offer_result(std::string& out, const OARouterOfferResult& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "value");
+    out += ": ";
+    enc_offer_snapshot(out, v.value, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1478,15 +1769,20 @@ inline Ask decode_ask(Reader& r);
 inline HostsSnapshot decode_hosts_snapshot(Reader& r);
 inline Decision decode_decision(Reader& r);
 inline PickResult decode_pick_result(Reader& r);
+inline OfferRequest decode_offer_request(Reader& r);
+inline Offer decode_offer(Reader& r);
+inline OfferSnapshot decode_offer_snapshot(Reader& r);
 inline OARouterModelsArguments decode_oa_router_models_arguments(Reader& r);
 inline OARouterHostsArguments decode_oa_router_hosts_arguments(Reader& r);
 inline OARouterPickArguments decode_oa_router_pick_arguments(Reader& r);
+inline OARouterOfferArguments decode_oa_router_offer_arguments(Reader& r);
 inline OAServiceFrame decode_oa_service_frame(Reader& r);
 inline OAServiceReply decode_oa_service_reply(Reader& r);
 inline OAServiceError decode_oa_service_error(Reader& r);
 inline OARouterModelsResult decode_oa_router_models_result(Reader& r);
 inline OARouterHostsResult decode_oa_router_hosts_result(Reader& r);
 inline OARouterPickResult decode_oa_router_pick_result(Reader& r);
+inline OARouterOfferResult decode_oa_router_offer_result(Reader& r);
 
 inline HostAllowance decode_host_allowance(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
@@ -1700,6 +1996,10 @@ inline Alias decode_alias(Reader& r) {
                 if (seen & 128u) r.refuse("duplicate_field");
                 seen |= 128u;
                 v.context_length = r.integer(INT64_MIN, INT64_MAX);
+            } else if (key == "effective_context_length") {
+                if (seen & 256u) r.refuse("duplicate_field");
+                seen |= 256u;
+                v.effective_context_length = r.integer(INT64_MIN, INT64_MAX);
             } else {
                 r.skip_value();
             }
@@ -1916,6 +2216,10 @@ inline HostState decode_host_state(Reader& r) {
                 if (seen & 4096u) r.refuse("duplicate_field");
                 seen |= 4096u;
                 v.domain = r.str();
+            } else if (key == "availability_cause") {
+                if (seen & 8192u) r.refuse("duplicate_field");
+                seen |= 8192u;
+                v.availability_cause = r.str();
             } else {
                 r.skip_value();
             }
@@ -2151,6 +2455,167 @@ inline PickResult decode_pick_result(Reader& r) {
     return v;
 }
 
+inline OfferRequest decode_offer_request(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OfferRequest v;
+    std::optional<std::string> wire_placement;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "profile") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.profile = r.str();
+            } else if (key == "placement") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                wire_placement = r.str();
+            } else if (key == "reserve") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.reserve = r.integer(INT64_MIN, INT64_MAX);
+            } else if (key == "fresh") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.fresh = r.boolean();
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 15u) != 15u) r.refuse("missing_field");
+    if (wire_placement) {
+        const auto parsed = parse_placement(*wire_placement);
+        if (!parsed) r.refuse("bad_enum");
+        v.placement = *parsed;
+    }
+    return v;
+}
+
+inline Offer decode_offer(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    Offer v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "family") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.family = r.str();
+            } else if (key == "names") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.names = r.str_list();
+            } else if (key == "servers") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.servers = r.str_list();
+            } else if (key == "context") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.context = r.integer(INT64_MIN, INT64_MAX);
+            } else if (key == "context_source") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.context_source = r.str();
+            } else if (key == "input") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.input = r.integer(INT64_MIN, INT64_MAX);
+            } else if (key == "unknown") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.unknown = r.str_list();
+            } else {
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 63u) != 63u) r.refuse("missing_field");
+    return v;
+}
+
+inline OfferSnapshot decode_offer_snapshot(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OfferSnapshot v;
+    std::optional<std::string> wire_outcome;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "observation") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.observation = decode_observation(r);
+            } else if (key == "offers") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.offers = decode_list<Offer>(r, decode_offer);
+            } else if (key == "outcome") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                wire_outcome = r.str();
+            } else {
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 7u) != 7u) r.refuse("missing_field");
+    if (wire_outcome) {
+        const auto parsed = parse_offer_outcome(*wire_outcome);
+        if (!parsed) r.refuse("bad_enum");
+        v.outcome = *parsed;
+    }
+    return v;
+}
+
 inline OARouterModelsArguments decode_oa_router_models_arguments(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
@@ -2241,6 +2706,41 @@ inline OARouterPickArguments decode_oa_router_pick_arguments(Reader& r) {
                 if (seen & 1u) r.refuse("duplicate_field");
                 seen |= 1u;
                 v.request = decode_pick_request(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
+    return v;
+}
+
+inline OARouterOfferArguments decode_oa_router_offer_arguments(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterOfferArguments v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "request") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.request = decode_offer_request(r);
             } else {
                 r.refuse("unknown_field");
             }
@@ -2498,6 +2998,41 @@ inline OARouterPickResult decode_oa_router_pick_result(Reader& r) {
     return v;
 }
 
+inline OARouterOfferResult decode_oa_router_offer_result(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterOfferResult v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "value") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.value = decode_offer_snapshot(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
+    return v;
+}
+
 }  // namespace detail
 
 inline std::string encode(const PickRequest& v) {
@@ -2518,7 +3053,7 @@ inline PickRequest decode(std::string_view data) {
 
 namespace detail {
 // kRefusals is in the order two of them are chosen between.
-inline const std::vector<std::string> kRefusals = {"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"};
+inline const std::vector<std::string> kRefusals = {"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"};
 
 inline int refusal_rank(std::string_view word) {
     for (std::size_t i = 0; i < kRefusals.size(); ++i)
@@ -2581,6 +3116,7 @@ struct Router{virtual ~Router()=default;
 virtual ModelsSnapshot models(const bool& fresh)=0;
 virtual HostsSnapshot hosts(const bool& fresh)=0;
 virtual PickResult pick(const PickRequest& request)=0;
+virtual OfferSnapshot offer(const OfferRequest& request)=0;
 };
 template<class Transport>struct RouterClient:Router{Transport& transport_;explicit RouterClient(Transport&t):transport_(t){}
 ModelsSnapshot models(const bool& fresh)override{detail::OARouterModelsArguments args;
@@ -2601,6 +3137,12 @@ detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.m
 auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_pick_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
 return result.value;
 }
+OfferSnapshot offer(const OfferRequest& request)override{detail::OARouterOfferArguments args;
+args.request=request;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Offer";detail::enc_oa_router_offer_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+return result.value;
+}
 };
 struct RouterService{inline static constexpr std::string_view kWireName="abstraction.router/router@1";inline static constexpr std::string_view kCapability="abstraction.router";template<class Transport>using Client=RouterClient<Transport>;};
 struct RouterDispatcher:FrameWriter,FrameExchanger{Router&handler;explicit RouterDispatcher(Router&h):handler(h){}
@@ -2615,6 +3157,8 @@ if(v.method=="Hosts"){
 throw DispatchError("wrong_mode");}
 if(v.method=="Pick"){
 throw DispatchError("wrong_mode");}
+if(v.method=="Offer"){
+throw DispatchError("wrong_mode");}
 throw DispatchError("unknown_method");}
 std::string exchange_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service==kEndpointContract)return describe_endpoint(frame,std::string(),std::string(),*this);if(v.service!="abstraction.router/router@1"){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
 try{
@@ -2624,6 +3168,8 @@ if(v.method=="Hosts"){
 detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_hosts_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_hosts(args);return detail::service_reply(v,payload);}
 if(v.method=="Pick"){
 detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_pick_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_pick(args);return detail::service_reply(v,payload);}
+if(v.method=="Offer"){
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_offer_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_offer(args);return detail::service_reply(v,payload);}
 throw ServiceError("unknown_method","");}catch(const ServiceError&e){return detail::service_reply(v,"",&e);}catch(const Refusal&e){ServiceError error(e.word,"");return detail::service_reply(v,"",&error);}
 }
 private:
@@ -2658,6 +3204,17 @@ try{
 detail::OARouterPickResult value;
 value.value=result;
 Raw payload;detail::enc_oa_router_pick_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_pick_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+}catch(...){throw ServiceError("invalid_result","");}
+}
+Raw invoke_offer(const detail::OARouterOfferArguments&args){
+OfferSnapshot result{};
+try{
+result=handler.offer(args.request);
+}catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
+try{
+detail::OARouterOfferResult value;
+value.value=result;
+Raw payload;detail::enc_oa_router_offer_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
 }catch(...){throw ServiceError("invalid_result","");}
 }
 private:

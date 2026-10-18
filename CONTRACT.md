@@ -31,7 +31,7 @@ tested, linked from here and linking back.
 | letter | topic |
 | --- | --- |
 | A | admission — binding the caller, and the rights actions a call requires |
-| D | deciding a server — how `Pick` ranks, chooses and reports one |
+| D | deciding a server — how `Pick` ranks, chooses and reports one, and what `Offer` lists |
 | N | naming — family and alias matching |
 | H | held — where the weights are, in the storage inventory |
 | S | servers off this machine — hosted servers and remote runtimes |
@@ -65,8 +65,8 @@ elsewhere. The service MUST derive the caller from native Program proof the
 kernel vouches for, and MUST refuse a caller it cannot bind before its frame
 is read as a request.
 
-**[ROUTE-A2] Reading and choosing carry separate rights.** `Models` and
-`Hosts` MUST decide `abstraction.router/inventory.read`; `Pick` MUST decide
+**[ROUTE-A2] Reading and choosing carry separate rights.** `Models`,
+`Hosts` and `Offer` MUST decide `abstraction.router/inventory.read`; `Pick` MUST decide
 `abstraction.router/route.pick`; both actions apply to resource `account`.
 Reading what exists is not the same permission as deciding where a request
 goes.
@@ -107,6 +107,64 @@ own.** Who holds the machine's accelerator memory MUST be read as
 `abstraction.resource/table@1`'s own answer. The router MUST carry no
 holder of its own: it reads that table to rank servers, and ranks without
 it when none is wired, saying so in `ServerState.why`.
+
+**[ROUTE-D7] One name on two servers is two aliases of one family.** A
+family's `names` MUST list one alias per server and name: two servers
+serving the same name are two aliases, each carrying its own server's
+residency and context lengths, in the servers' preference order. A request
+naming that name MUST reach the family once.
+
+**[ROUTE-D8] An offer is one name and one conservative context per family.**
+`Offer` MUST list every family with at least one alias that is servable,
+serves the requested profile (`ROUTE-D9`), and sits on a server the
+placement admits. The counted
+aliases MUST be ordered by UTF-8 bytes, and `names[0]` is the alias to ask
+for. `context` MUST be the smallest bound across the counted aliases, each
+alias bounded by its own server's valid effective length, else its maximum,
+else the profile's catalogue default (32,768 tokens for `chat`, 8,192 for
+`embed`); `context_source` MUST name the source of that smallest bound. When
+a counted alias sits on a server that fixes its request window at load and
+reports no valid effective length, `context` MUST be 0, `context_source`
+`unknown`, and `unknown` MUST name that alias as `<server>/<name>`. `input`
+MUST be `context - reserve`, floored at 0. A profile without a context
+window answers `context_source: none`, `context: 0` and `input: 0`.
+Families are listed in UTF-8 byte order of `family`. The fold reads the
+latest survey (`fresh` surveys first) and sends nothing to a server on this
+machine; the servers that fix their window at load are a router host-table
+fact, Lemonade today. `research/opencode-inventory/DECISION.md` records the
+decision; `go/testdata/offer.json` holds the cases.
+
+**[ROUTE-D9] A model serves only the profiles named for it.** Each alias
+MUST be judged by the first source in this table that names profiles for
+it, and `Pick`'s profile check and `Offer` MUST judge every alias of a
+server by name, so one alias's profiles never decide another's.
+
+| server | names an alias's profiles | when it names none, the alias serves |
+| --- | --- | --- |
+| native provider | its declaration's `models` entries | (every entry names some) |
+| LM Studio, Ollama | the server's own model metadata | the server's profiles |
+| remote runtime | its own `Models` alias `profiles`, kept to the profiles declared for the remote | the profiles declared for the remote |
+| any other server | nothing | the server's profiles |
+
+A native provider's declaration names its models in `models`, each entry
+read against the profiles the declaration serves: its listed profiles
+whose contracts it declares, or `chat` for a chat-only declaration that
+lists none (`abstraction-facade` CONTRACT.md FAC-R3). An entry
+`<profile>:<model>` with a nonempty `<model>`, where `<profile>` is a served
+profile, MUST serve `<model>` for that profile alone, and every other entry,
+a colon inside a model name included, MUST serve the whole entry for every
+served profile. A model literally named `chat:x` is written `chat:chat:x`
+for a declaration that serves chat. `Pick` for a model whose every server
+serves it for other profiles only MUST answer `no_host` (`ROUTE-E1`), and
+`Offer` for a profile MUST leave out the aliases that do not serve it
+(`ROUTE-D8`). `Models` MUST report each alias's profiles. A native provider
+is reached for each profile it serves, audio included, at
+`abstraction.inference/<profile>@1` over its native transport, and decides
+its own speech formats at its own admission. The profiles are the seeded
+`chat`, `embed`, `transcription`, `speech`, `image` and `live`, which a
+server that declares none serves by its wire, and `video`, which only a
+native provider declaring it serves: the runtime's job executor reaches it
+at `abstraction.inference/video@1` (inference CONTRACT.md INF-G5).
 
 ### Naming and family matching
 
@@ -189,6 +247,21 @@ runtime's names, states and credential names are its own; it applies its
 own credential to the requests it performs on this runtime's behalf, and
 this router MUST NOT carry or apply it.
 
+A remote runtime's aliases MUST carry the `context_length` and
+`effective_context_length` its own `Models` reports, the smallest bound
+across its aliases of one name. Its families MUST be offered by asking the
+remote's own `router@1` `Offer` with the same profile, reserve and fresh
+flag and `placement: any`; each remote offer folds into the local family of
+the same name by the minimum of `context`, the union of `names`, its
+`servers` prefixed `<remote-name>/` at the remote's place in the server
+order, and its `unknown` entries prefixed `<remote-name>/`. A remote that
+answers `unknown_method` is older than this rule; its `Models` aliases are
+then folded locally like any hosted server's, with their `context_length`
+and `effective_context_length` carried (ROUTE-D8). A remote whose `Offer`
+fails otherwise MUST count nothing, as a server whose listing fails is left
+out. The fallback retires when the earliest supported remote runtime carries
+`Offer`.
+
 ### The audit
 
 **[ROUTE-U1] Every routing decision is recorded in an audit no caller can
@@ -220,6 +293,16 @@ outcome word such as `not_allowed` is a routing decision, carried in the
 decision itself, never a transport failure carried in the response's
 code.
 
+**[ROUTE-E3] Offer reports its decision in one typed outcome.** `Offer`
+MUST return `offered` with the observed inventory, including an empty
+inventory. A negative reserve or unsupported request semantics MUST return
+`invalid`; a missing offer or policy decision MUST return `unavailable`.
+A verified subject whose inventory rule refuses MUST receive
+`not_permitted`. A receiving boundary refusal MUST return `forbidden`.
+Every refusal MUST carry no offers and an empty observation. Callers MUST
+check `outcome` before consuming offers. Binding and envelope failures
+remain protocol refusals under `ROUTE-A1` and `ROUTE-E2`.
+
 | outcome | rule | meaning |
 | --- | --- | --- |
 | `resident` | ROUTE-E1 | an allowed server already holds the model |
@@ -236,6 +319,11 @@ code.
 | `unknown_operation` | ROUTE-E2 | the frame named an operation the service does not serve |
 | `unavailable` | ROUTE-E2 | a policy decision could not be obtained (`rights:unavailable`) |
 | `forbidden` | ROUTE-E2 | rights refused the action |
+| `offered` | ROUTE-E3 | the current model offers, including an empty inventory |
+| `invalid` | ROUTE-E3 | the offer request has unsupported semantics |
+| `unavailable` | ROUTE-E3 | the offer or its policy decision could not be obtained |
+| `not_permitted` | ROUTE-E3 | the verified subject's inventory rule refuses |
+| `forbidden` | ROUTE-E3 | the receiving boundary refuses |
 
 ## Bounds
 
@@ -260,6 +348,20 @@ code.
   routing decisions, protocol codes for transport refusals, matching the
   same split `abstraction-rights` CONTRACT.md draws between its decision
   outcomes and its own protocol failures.
+  `Offer`, added after the published method set, carries semantic refusals
+  through `ROUTE-E3`'s typed result. The published `Models`, `Hosts` and
+  `Pick` shapes retain their original refusal channel until `router@2`.
+- ROUTE-D8 treats Lemonade alone as a server that fixes its request window
+  at load. Ollama and LM Studio also load a model with a window; until the
+  router reads that loaded window (Ollama's `/api/ps` `context_length`, LM
+  Studio's loaded context), their aliases are bounded by their maximum.
+- On ROUTE-S4's `unknown_method` fallback a remote's aliases reach this
+  router under the remote's own name, and a remote Lemonade alias loses its
+  window-at-load marking: without an effective length it is bounded by its
+  maximum, where the remote's own `Offer` would answer `unknown`.
+- A placement outside `local`, `hosted` and `any` is refused by the
+  generated dispatcher with the codec refusal `bad_enum` before the service
+  is asked; the legacy line request answers `invalid_request` for it.
 
 ## Not built
 

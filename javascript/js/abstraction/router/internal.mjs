@@ -126,6 +126,38 @@ function writeList(out, v, depth, enc) {
   out.byte(0x5d);
 }
 
+export const AvailabilityCause = Object.freeze({
+  TransportUnavailable: "transport_unavailable",
+  Credential: "credential",
+  Rights: "rights",
+  Configuration: "configuration",
+  Malformed: "malformed",
+  Unknown: "unknown",
+  Other: "other",
+});
+
+export const Placement = Object.freeze({
+  Local: "local",
+  Hosted: "hosted",
+  Any: "any",
+});
+
+export const ContextSource = Object.freeze({
+  Effective: "effective",
+  Maximum: "maximum",
+  Default: "default",
+  Unknown: "unknown",
+  None: "none",
+});
+
+export const OfferOutcome = Object.freeze({
+  Offered: "offered",
+  Invalid: "invalid",
+  Unavailable: "unavailable",
+  Forbidden: "forbidden",
+  NotPermitted: "not_permitted",
+});
+
 export const ServiceErrorCode = Object.freeze({
   HandlerError: "handler_error",
   InvalidResult: "invalid_result",
@@ -296,6 +328,14 @@ function writeAlias(out, v, depth) {
     out.ascii(": ");
     num(out, v.contextLength);
   }
+  if (v.effectiveContextLength !== 0n) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "effective_context_length");
+    out.ascii(": ");
+    num(out, v.effectiveContextLength);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -388,6 +428,9 @@ function writeModelsSnapshot(out, v, depth) {
 }
 
 function writeHostState(out, v, depth) {
+    if (v.availabilityCause !== null) {
+    if (typeof v.availabilityCause !== "string") throw new Refusal("wrong_type",0);
+    }
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -477,6 +520,14 @@ function writeHostState(out, v, depth) {
     esc(out, "domain");
     out.ascii(": ");
     esc(out, v.domain);
+  }
+  if (v.availabilityCause !== undefined && v.availabilityCause !== null) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "availability_cause");
+    out.ascii(": ");
+    esc(out, v.availabilityCause);
   }
   out.byte(0x0a);
   pad(out, depth);
@@ -653,6 +704,115 @@ function writePickResult(out, v, depth) {
   out.byte(0x7d);
 }
 
+function writeOfferRequest(out, v, depth) {
+    if (typeof v.placement !== "string") throw new Refusal("wrong_type",0);
+    if (v.placement !== "local" && v.placement !== "hosted" && v.placement !== "any") { throw new Refusal("bad_enum",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "profile");
+  out.ascii(": ");
+  esc(out, v.profile);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "placement");
+  out.ascii(": ");
+  esc(out, v.placement);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "reserve");
+  out.ascii(": ");
+  num(out, v.reserve);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "fresh");
+  out.ascii(": ");
+  out.ascii(v.fresh ? "true" : "false");
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOffer(out, v, depth) {
+    if (typeof v.contextSource !== "string") throw new Refusal("wrong_type",0);
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "family");
+  out.ascii(": ");
+  esc(out, v.family);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "names");
+  out.ascii(": ");
+  strs(out, v.names, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "servers");
+  out.ascii(": ");
+  strs(out, v.servers, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "context");
+  out.ascii(": ");
+  num(out, v.context);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "context_source");
+  out.ascii(": ");
+  esc(out, v.contextSource);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "input");
+  out.ascii(": ");
+  num(out, v.input);
+  if (v.unknown.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "unknown");
+    out.ascii(": ");
+    strs(out, v.unknown, depth + 1);
+  }
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOfferSnapshot(out, v, depth) {
+    if (typeof v.outcome !== "string") throw new Refusal("wrong_type",0);
+    if (v.outcome !== "offered" && v.outcome !== "invalid" && v.outcome !== "unavailable" && v.outcome !== "forbidden" && v.outcome !== "not_permitted") { throw new Refusal("bad_enum",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "observation");
+  out.ascii(": ");
+  writeObservation(out, v.observation, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "offers");
+  out.ascii(": ");
+  writeList(out, v.offers, depth + 1, writeOffer);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "outcome");
+  out.ascii(": ");
+  esc(out, v.outcome);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
 function writeOARouterModelsArguments(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
@@ -684,6 +844,18 @@ function writeOARouterPickArguments(out, v, depth) {
   esc(out, "request");
   out.ascii(": ");
   writePickRequest(out, v.request, depth + 1);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOARouterOfferArguments(out, v, depth) {
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "request");
+  out.ascii(": ");
+  writeOfferRequest(out, v.request, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -804,6 +976,18 @@ function writeOARouterPickResult(out, v, depth) {
   esc(out, "value");
   out.ascii(": ");
   writePickResult(out, v.value, depth + 1);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOARouterOfferResult(out, v, depth) {
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "value");
+  out.ascii(": ");
+  writeOfferSnapshot(out, v.value, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -1213,12 +1397,16 @@ export function newObservation() {
 // storage inventory stores holding an object this alias's own name or digest
 // matches, in store order; empty when no store's object matches this name. host
 // is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's context window in
-// tokens, read from the host's own metadata without loading it (LM Studio's
-// max_context_length, Ollama's model_info context_length, Lemonade's
+// never resident or servable. context_length is the model's maximum supported
+// context window in tokens, read from host metadata without loading it (LM
+// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
 // max_context_window); zero when the host reports none.
+// effective_context_length is a positive per-request context limit the host
+// currently reports: the loaded value when the model is resident, otherwise its
+// configured value when the host reports one (Lemonade's context_length); zero
+// when unknown. A nonpositive or contradictory effective value is omitted.
 export function newAlias() {
-  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [], heldIn: [], contextLength: 0n };
+  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [], heldIn: [], contextLength: 0n, effectiveContextLength: 0n };
 }
 
 // One role-bearing object a store holds, folded into a family's detail rather
@@ -1230,19 +1418,20 @@ export function newComponent() {
   return { store: "", role: "", name: "" };
 }
 
-// held_in names the storage inventory stores holding an object of this family,
-// in store order, whether or not a host serves it; empty when no store reports
-// one. A family whose names are all unservable is on this machine and answered
-// by nothing. family_source is descriptor when the storage inventory published
-// an abstraction.model/descriptor@1 naming this family, and alias when no
-// descriptor names it and a program's own name for the model is the family;
-// empty when the service reports neither. components lists a projector, VAE or
-// other role-bearing object a store holds and this family's descriptor named as
-// its base, or, when no descriptor could derive a base for it, an object that
-// is this family's only content — held_in and family_source cover the family
-// it was folded into or the family it stands in for either way; components
-// exists to say the family answers for a part, not a whole model, when that is
-// what it is.
+// names lists one alias per server and name; a name two servers serve appears
+// twice, once per server. held_in names the storage inventory stores holding an
+// object of this family, in store order, whether or not a host serves it; empty
+// when no store reports one. A family whose names are all unservable is on this
+// machine and answered by nothing. family_source is descriptor when the storage
+// inventory published an abstraction.model/descriptor@1 naming this family, and
+// alias when no descriptor names it and a program's own name for the model is
+// the family; empty when the service reports neither. components lists a
+// projector, VAE or other role-bearing object a store holds and this family's
+// descriptor named as its base, or, when no descriptor could derive a base for
+// it, an object that is this family's only content — held_in and
+// family_source cover the family it was folded into or the family it stands in
+// for either way; components exists to say the family answers for a part, not a
+// whole model, when that is what it is.
 export function newFamily() {
   return { family: "", names: [], heldIn: [], familySource: "", components: [] };
 }
@@ -1267,7 +1456,7 @@ export function newModelsSnapshot() {
 // and never a header value. A listing the applier refuses reads up false with
 // why credential:<outcome>:<name>. A host on this machine omits all three.
 export function newHostState() {
-  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false, hosted: false, wire: "", credential: "", declaredBy: "", profiles: [], domain: "" };
+  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false, hosted: false, wire: "", credential: "", declaredBy: "", profiles: [], domain: "", availabilityCause: null };
 }
 
 export function newAsk() {
@@ -1286,6 +1475,34 @@ export function newPickResult() {
   return { observation: newObservation(), decision: newDecision() };
 }
 
+// profile is a profiles member or <owner>/<name>@<n>; empty is chat. placement
+// local counts servers on this machine, hosted counts hosted servers and remote
+// runtimes, any counts both. reserve is the output budget in tokens the caller
+// plans to keep for the answer; 0 keeps none. fresh surveys the servers first.
+export function newOfferRequest() {
+  return { profile: "", placement: "", reserve: 0n, fresh: false };
+}
+
+// names are the counted aliases in UTF-8 byte order; the first is the name to
+// ask for. servers are the servers counted, in preference order. context is the
+// smallest bound across the counted aliases, 0 when context_source is unknown
+// or none. context_source says where the smallest bound came from: effective
+// for a server-reported request limit, maximum for a model maximum, default for
+// the profile's catalogue default when no server reported a length, unknown
+// when a counted server fixes its window at load and reported none, none for a
+// profile without a context window. input is context minus the request's
+// reserve, 0 when nothing remains or context is 0. unknown names the aliases
+// whose server reported no usable request limit, as <server>/<name>.
+export function newOffer() {
+  return { family: "", names: [], servers: [], context: 0n, contextSource: "", input: 0n, unknown: [] };
+}
+
+// Exactly offered carries observation and offers. Every refusal carries an
+// empty observation and no offers; it makes no model availability claim.
+export function newOfferSnapshot() {
+  return { observation: newObservation(), offers: [], outcome: "" };
+}
+
 function newOARouterModelsArguments() {
   return { fresh: false };
 }
@@ -1296,6 +1513,10 @@ function newOARouterHostsArguments() {
 
 function newOARouterPickArguments() {
   return { request: newPickRequest() };
+}
+
+function newOARouterOfferArguments() {
+  return { request: newOfferRequest() };
 }
 
 function newOAServiceFrame() {
@@ -1320,6 +1541,10 @@ function newOARouterHostsResult() {
 
 function newOARouterPickResult() {
   return { value: newPickResult() };
+}
+
+function newOARouterOfferResult() {
+  return { value: newOfferSnapshot() };
 }
 
 function readHostAllowance(r) {
@@ -1534,6 +1759,10 @@ function readAlias(r) {
         if (seen & 128) throw r.refuse("duplicate_field");
         seen |= 128;
         v.contextLength = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else if (key === "effective_context_length") {
+        if (seen & 256) throw r.refuse("duplicate_field");
+        seen |= 256;
+        v.effectiveContextLength = r.integer(-9223372036854775808n, 9223372036854775807n);
       } else {
         r.skipValue();
       }
@@ -1750,6 +1979,10 @@ function readHostState(r) {
         if (seen & 4096) throw r.refuse("duplicate_field");
         seen |= 4096;
         v.domain = r.string();
+      } else if (key === "availability_cause") {
+        if (seen & 8192) throw r.refuse("duplicate_field");
+        seen |= 8192;
+        v.availabilityCause = r.string();
       } else {
         r.skipValue();
       }
@@ -1985,6 +2218,157 @@ function readPickResult(r) {
   return v;
 }
 
+function readOfferRequest(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOfferRequest();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "profile") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.profile = r.string();
+      } else if (key === "placement") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.placement = r.string();
+      } else if (key === "reserve") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.reserve = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else if (key === "fresh") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.fresh = r.boolean();
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 15) >>> 0) !== 15) throw r.refuse("missing_field");
+    if (v.placement !== "local" && v.placement !== "hosted" && v.placement !== "any") { throw r.refuse("bad_enum"); }
+  return v;
+}
+
+function readOffer(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOffer();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "family") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.family = r.string();
+      } else if (key === "names") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.names = r.strList();
+      } else if (key === "servers") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.servers = r.strList();
+      } else if (key === "context") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.context = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else if (key === "context_source") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.contextSource = r.string();
+      } else if (key === "input") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.input = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else if (key === "unknown") {
+        if (seen & 64) throw r.refuse("duplicate_field");
+        seen |= 64;
+        v.unknown = r.strList();
+      } else {
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 63) >>> 0) !== 63) throw r.refuse("missing_field");
+  return v;
+}
+
+function readOfferSnapshot(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOfferSnapshot();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "observation") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.observation = readObservation(r);
+      } else if (key === "offers") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.offers = readList(r, readOffer);
+      } else if (key === "outcome") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.outcome = r.string();
+      } else {
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 7) >>> 0) !== 7) throw r.refuse("missing_field");
+    if (v.outcome !== "offered" && v.outcome !== "invalid" && v.outcome !== "unavailable" && v.outcome !== "forbidden" && v.outcome !== "not_permitted") { throw r.refuse("bad_enum"); }
+  return v;
+}
+
 function readOARouterModelsArguments(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
@@ -2075,6 +2459,41 @@ function readOARouterPickArguments(r) {
         if (seen & 1) throw r.refuse("duplicate_field");
         seen |= 1;
         v.request = readPickRequest(r);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1) >>> 0) !== 1) throw r.refuse("missing_field");
+  return v;
+}
+
+function readOARouterOfferArguments(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterOfferArguments();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "request") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.request = readOfferRequest(r);
       } else {
         throw r.refuse("unknown_field");
       }
@@ -2332,6 +2751,41 @@ function readOARouterPickResult(r) {
   return v;
 }
 
+function readOARouterOfferResult(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterOfferResult();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "value") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.value = readOfferSnapshot(r);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1) >>> 0) !== 1) throw r.refuse("missing_field");
+  return v;
+}
+
 export function decode(data) {
   const r = new Reader(data);
   r.ws();
@@ -2342,7 +2796,7 @@ export function decode(data) {
 }
 
 // refusals is in the order two of them are chosen between.
-const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "trailing_bytes"];
+const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"];
 
 function refusalRank(word) {
   return refusals.indexOf(word);
@@ -2405,24 +2859,29 @@ _serviceRecords["HostAllowance"] = [["hosts","list<string>","never"],];
 _serviceRecords["PickRequest"] = [["model","string","never"],["fresh","bool","never"],["allowed","HostAllowance","absent"],["profile","string","zero"],];
 _serviceRecords["Caller"] = [["userDescription","string","never"],["pathDescription","string","never"],];
 _serviceRecords["Observation"] = [["caller","Caller","never"],["tookMs","i64","never"],["cacheAgeMs","i64","never"],];
-_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],["heldIn","list<string>","zero"],["contextLength","i64","zero"],];
+_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],["heldIn","list<string>","zero"],["contextLength","i64","zero"],["effectiveContextLength","i64","zero"],];
 _serviceRecords["Component"] = [["store","string","never"],["role","string","never"],["name","string","zero"],];
 _serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],["heldIn","list<string>","zero"],["familySource","string","zero"],["components","list<Component>","zero"],];
 _serviceRecords["ModelsSnapshot"] = [["observation","Observation","never"],["models","list<Family>","never"],];
-_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],];
+_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],["availabilityCause","string","absent"],];
 _serviceRecords["Ask"] = [["at","string","never"],["caller","string","never"],["user","string","never"],["model","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],];
 _serviceRecords["HostsSnapshot"] = [["observation","Observation","never"],["hosts","list<HostState>","never"],["doubled","list<string>","never"],["asked","list<Ask>","never"],];
 _serviceRecords["Decision"] = [["asked","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],["model","string","never"],["endpoint","string","never"],["installedOn","list<string>","never"],["authorised","HostAllowance","absent"],["withheld","list<string>","never"],["loads","i64","never"],["why","string","never"],];
 _serviceRecords["PickResult"] = [["observation","Observation","never"],["decision","Decision","never"],];
+_serviceRecords["OfferRequest"] = [["profile","string","never"],["placement","string","never"],["reserve","i64","never"],["fresh","bool","never"],];
+_serviceRecords["Offer"] = [["family","string","never"],["names","list<string>","never"],["servers","list<string>","never"],["context","i64","never"],["contextSource","string","never"],["input","i64","never"],["unknown","list<string>","zero"],];
+_serviceRecords["OfferSnapshot"] = [["observation","Observation","never"],["offers","list<Offer>","never"],["outcome","string","never"],];
 _serviceRecords["OARouterModelsArguments"] = [["fresh","bool","never"],];
 _serviceRecords["OARouterHostsArguments"] = [["fresh","bool","never"],];
 _serviceRecords["OARouterPickArguments"] = [["request","PickRequest","never"],];
+_serviceRecords["OARouterOfferArguments"] = [["request","OfferRequest","never"],];
 _serviceRecords["OAServiceFrame"] = [["version","i32","never"],["service","string","never"],["method","string","never"],["arguments","json","never"],];
 _serviceRecords["OAServiceReply"] = [["version","i32","never"],["service","string","never"],["method","string","never"],["ok","bool","never"],["payload","json","never"],];
 _serviceRecords["OAServiceError"] = [["code","string","never"],["message","string","never"],];
 _serviceRecords["OARouterModelsResult"] = [["value","ModelsSnapshot","never"],];
 _serviceRecords["OARouterHostsResult"] = [["value","HostsSnapshot","never"],];
 _serviceRecords["OARouterPickResult"] = [["value","PickResult","never"],];
+_serviceRecords["OARouterOfferResult"] = [["value","OfferSnapshot","never"],];
 
 function _serviceRequest(service, method, argumentsBytes) {
   return _serviceEncode(writeOAServiceFrame, {
@@ -2479,6 +2938,18 @@ export class RouterClient {
     const _request = _serviceRequest("abstraction.router/router@1", "Pick", _payload);
     const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Pick");
     const _result = _serviceDecode(readOARouterPickResult, _reply, 1);
+    return _result.value;
+  }
+
+  async offer(request) {
+    const _args = newOARouterOfferArguments();
+    _args.request = request;
+    _serviceCheck("OARouterOfferArguments", _args);
+    const _payload = _serviceEncode(writeOARouterOfferArguments, _args, 1);
+    _serviceDecode(readOARouterOfferArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "Offer", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Offer");
+    const _result = _serviceDecode(readOARouterOfferResult, _reply, 1);
     return _result.value;
   }
 }

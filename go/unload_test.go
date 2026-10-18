@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A host with no mechanism says so rather than pretending it let go.
@@ -77,6 +78,75 @@ func TestLMStudioRefusalCarriesItsReason(t *testing.T) {
 	err := LMStudio(server.URL).Unload(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "model is generating") {
 		t.Fatalf("the refusal lost its reason: %v", err)
+	}
+}
+
+// Lemonade's native empty-body unload requests all models to be unloaded.
+// This test verifies only the adapter request shape; the resource instrument
+// decides whether the request actually freed memory.
+func TestLemonadeRequestsNativeUnloadAll(t *testing.T) {
+	type requestInfo struct{ method, path, body string }
+	requests := make(chan requestInfo, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		requests <- requestInfo{method: r.Method, path: r.URL.Path, body: string(data)}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	h := Lemonade(server.URL)
+	if !h.Unloadable() {
+		t.Fatal("Lemonade has a native unload endpoint, but the adapter does not expose it")
+	}
+	if err := h.Unload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	request := <-requests
+	if request.method != http.MethodPost || request.path != "/api/v1/unload" || request.body != "" {
+		t.Fatalf("native unload request was %s %s with body %q", request.method, request.path, request.body)
+	}
+}
+
+func TestLemonadeUnloadPropagatesNativeRefusal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		io.WriteString(w, `{"error":"model is busy"}`)
+	}))
+	defer server.Close()
+
+	err := Lemonade(server.URL).Unload(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "model is busy") {
+		t.Fatalf("native refusal lost its reason: %v", err)
+	}
+}
+
+func TestLemonadeUnloadHonorsCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Lemonade(server.URL).Unload(ctx) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Lemonade unload request did not reach the fixture")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled native unload returned success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Lemonade unload did not return after cancellation")
 	}
 }
 

@@ -72,9 +72,10 @@ func postJSON(ctx context.Context, url string, body any) error {
 	return nil
 }
 
-// fetchContext is fetch with a caller's deadline, for the listings an unload
+// fetchUnloadContext reads with an unload's longer budget and caller deadline,
+// for the listings an unload
 // has to read first.
-func fetchContext(ctx context.Context, url string, into any) error {
+func fetchUnloadContext(ctx context.Context, url string, into any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -110,7 +111,7 @@ func lmStudioInstances(ctx context.Context, base string) ([]string, error) {
 			} `json:"loaded_instances"`
 		} `json:"models"`
 	}
-	if err := fetchContext(ctx, base+"/api/v1/models", &listing); err != nil {
+	if err := fetchUnloadContext(ctx, base+"/api/v1/models", &listing); err != nil {
 		return nil, err
 	}
 	var out []string
@@ -151,6 +152,15 @@ func unloadLMStudio(ctx context.Context, h *Host) error {
 	return errors.Join(failures...)
 }
 
+// unloadLemonade requests its native unload-all operation. Lemonade serializes
+// this operation with router admissions and will not stop a busy backend; its
+// busy wait is bounded, and HTTP success may leave a resident in place. The
+// lease book's instrument settling remains the authority on whether memory was
+// freed.
+func unloadLemonade(ctx context.Context, h *Host) error {
+	return postJSON(ctx, h.Base+"/api/v1/unload", nil)
+}
+
 // unloadOllama asks Ollama to let go of each resident model the way Ollama
 // itself documents: a request naming the model with keep_alive 0 and nothing
 // to generate.
@@ -160,7 +170,7 @@ func unloadOllama(ctx context.Context, h *Host) error {
 			Name string `json:"name"`
 		} `json:"models"`
 	}
-	if err := fetchContext(ctx, h.Base+"/api/ps", &running); err != nil {
+	if err := fetchUnloadContext(ctx, h.Base+"/api/ps", &running); err != nil {
 		return err
 	}
 	var failures []error

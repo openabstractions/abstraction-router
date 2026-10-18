@@ -53,6 +53,9 @@ type contextProvider struct{}
 func (contextProvider) Models(bool) (wire.ModelsSnapshot, error)       { return wire.ModelsSnapshot{}, nil }
 func (contextProvider) Hosts(bool) (wire.HostsSnapshot, error)         { return wire.HostsSnapshot{}, nil }
 func (contextProvider) Pick(wire.PickRequest) (wire.PickResult, error) { return wire.PickResult{}, nil }
+func (contextProvider) Offer(wire.OfferRequest) (wire.OfferSnapshot, error) {
+	return wire.OfferSnapshot{Outcome: wire.OfferOutcomeOffered}, nil
+}
 func TestContextCancellationDuringCallAndDefaultReuse(t *testing.T) {
 	dir, err := os.MkdirTemp("", "oa-ctx-")
 	if err != nil {

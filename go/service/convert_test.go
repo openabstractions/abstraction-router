@@ -64,9 +64,28 @@ func TestToWireDecisionFieldParity(t *testing.T) {
 // instead of by field name.
 func TestFromWirePickRequestFieldParity(t *testing.T) {
 	checkFieldParity(t, fromWirePickRequest, map[string]string{
-		"Op":      "every Pick call performs router.OpRoute; the wire request carries no operation to convert",
-		"Hosts":   "carries wire.PickRequest's Allowed *HostAllowance under router.Request's existing field name; TestFromWirePickRequestCarriesAllowedHosts checks the value",
-		"Allowed": "carried onto router.Request's Hosts field under a different name; TestFromWirePickRequestCarriesAllowedHosts checks the value",
+		"Op":        "every Pick call performs router.OpRoute; the wire request carries no operation to convert",
+		"Hosts":     "carries wire.PickRequest's Allowed *HostAllowance under router.Request's existing field name; TestFromWirePickRequestCarriesAllowedHosts checks the value",
+		"Allowed":   "carried onto router.Request's Hosts field under a different name; TestFromWirePickRequestCarriesAllowedHosts checks the value",
+		"Placement": "only Offer reads a placement; a pick is decided by its host allowance",
+		"Reserve":   "only Offer reads an answer reserve",
+	})
+}
+
+// TestToWireOfferFieldParity guards toWireOffer's copy from router.Offer
+// onto wire.Offer, including ContextSource's word.
+func TestToWireOfferFieldParity(t *testing.T) {
+	checkFieldParity(t, toWireOffer, nil)
+}
+
+// TestFromWireOfferRequestFieldParity guards fromWireOfferRequest's copy
+// from wire.OfferRequest onto router.Request, including Placement's move from
+// the closed enum to its wire word.
+func TestFromWireOfferRequestFieldParity(t *testing.T) {
+	checkFieldParity(t, fromWireOfferRequest, map[string]string{
+		"Op":    "every Offer call performs router.OpOffer; the wire request carries no operation to convert",
+		"Model": "an offer names no model; only Pick reads it",
+		"Hosts": "an offer names no host allowance; its placement chooses the servers",
 	})
 }
 
@@ -148,6 +167,15 @@ func checkFieldParity[In, Out any](t *testing.T, convert func(In) Out, allow map
 func equalField(t *testing.T, fieldName string, outVal, inVal reflect.Value) bool {
 	t.Helper()
 	switch fieldName {
+	case "Placement":
+		in := inVal.Interface().(wire.Placement)
+		return outVal.String() == in.String() && in.Known()
+	case "ContextSource":
+		return outVal.String() == inVal.String()
+	case "AvailabilityCause":
+		in := inVal.Interface().(router.AvailabilityCause)
+		out := outVal.Interface().(*wire.AvailabilityCause)
+		return (in == "" && out == nil) || (out != nil && string(*out) == string(in))
 	case "Installed", "Loads":
 		return outVal.Int() == inVal.Int()
 	case "At":
@@ -175,6 +203,9 @@ func equalField(t *testing.T, fieldName string, outVal, inVal reflect.Value) boo
 		}
 		return reflect.DeepEqual(out.Hosts, *in)
 	case "Names":
+		if names, ok := inVal.Interface().([]string); ok {
+			return reflect.DeepEqual(outVal.Interface(), names)
+		}
 		in, ok := inVal.Interface().([]router.Alias)
 		if !ok {
 			t.Fatalf("field %q: expected []router.Alias on the internal side, got %s", fieldName, inVal.Type())
@@ -258,6 +289,9 @@ func fill(t *testing.T, v reflect.Value, next *int) {
 		v.SetBool(true)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		v.SetInt(int64(seed))
+	case reflect.Uint32:
+		// A generated closed enum such as wire.Placement: a member, 1..3.
+		v.SetUint(uint64(1 + seed%3))
 	case reflect.Slice:
 		switch v.Type().Elem().Kind() {
 		case reflect.String:

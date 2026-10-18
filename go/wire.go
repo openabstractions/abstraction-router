@@ -11,6 +11,7 @@ const (
 	OpModels    = "models"
 	OpResidency = "residency"
 	OpRoute     = "route"
+	OpOffer     = "offer"
 )
 
 // Bound is what this service requires of a caller before it will answer for it.
@@ -35,6 +36,12 @@ type Request struct {
 	// Profile is what the caller asks the host to serve (profiles.go); empty is
 	// chat.
 	Profile string `json:"profile,omitempty"`
+	// Placement is which servers an offer counts (offer.go): PlacementLocal,
+	// PlacementHosted or PlacementAny. Only OpOffer reads it.
+	Placement string `json:"placement,omitempty"`
+	// Reserve is the output budget in tokens an offer's caller keeps for the
+	// answer. Only OpOffer reads it.
+	Reserve int64 `json:"reserve,omitempty"`
 }
 
 type Response struct {
@@ -50,7 +57,45 @@ type Response struct {
 	Doubled    []string    `json:"doubled,omitempty"`
 	Asked      []Ask       `json:"asked,omitempty"`
 	Decision   *Decision   `json:"decision,omitempty"`
+	Offers     []Offer     `json:"offers,omitempty"`
 }
+
+// Offer is one family a caller may ask for a profile (ROUTE-D8): the name to
+// ask for, the servers counted and the conservative context.
+type Offer struct {
+	Family string `json:"family"`
+	// Names are the counted aliases in UTF-8 byte order; the first is the
+	// name to ask for.
+	Names []string `json:"names"`
+	// Servers are the servers counted, in preference order; a remote
+	// runtime's own servers read <remote>/<server>.
+	Servers []string `json:"servers"`
+	// Context is the smallest bound across the counted aliases, 0 when
+	// ContextSource is ContextUnknown or ContextNone.
+	Context       int64  `json:"context"`
+	ContextSource string `json:"context_source"`
+	// Input is Context minus the request's reserve, floored at 0.
+	Input int64 `json:"input"`
+	// Unknown names each counted alias whose server fixes its window at load
+	// and reported no valid request limit, as <server>/<name>.
+	Unknown []string `json:"unknown,omitempty"`
+}
+
+// Placements an offer request names.
+const (
+	PlacementLocal  = "local"
+	PlacementHosted = "hosted"
+	PlacementAny    = "any"
+)
+
+// Context sources an offer names.
+const (
+	ContextEffective = "effective"
+	ContextMaximum   = "maximum"
+	ContextDefault   = "default"
+	ContextUnknown   = "unknown"
+	ContextNone      = "none"
+)
 
 // Family is one model under every name this machine knows it by.
 type Family struct {
@@ -109,25 +154,43 @@ type Alias struct {
 	// host's own metadata without loading it; zero when the host reports
 	// none.
 	ContextLength int64 `json:"context_length,omitempty"`
+	// EffectiveContextLength is the host-reported request limit: the loaded
+	// value when resident or configured value otherwise. Zero means unknown.
+	EffectiveContextLength int64 `json:"effective_context_length,omitempty"`
 }
 
 // HostState names a hosted host's wire and credential name; it never carries a
 // header value.
 type HostState struct {
-	Host       string   `json:"host"`
-	Base       string   `json:"base"`
-	Up         bool     `json:"up"`
-	Why        string   `json:"why,omitempty"`
-	Installed  int      `json:"installed"`
-	Resident   []string `json:"resident,omitempty"`
-	Servable   bool     `json:"servable"`
-	Hosted     bool     `json:"hosted,omitempty"`
-	Wire       string   `json:"wire,omitempty"`
-	Credential string   `json:"credential,omitempty"`
-	DeclaredBy string   `json:"declared_by,omitempty"`
-	Profiles   []string `json:"profiles,omitempty"`
-	Domain     string   `json:"domain,omitempty"`
+	Host              string            `json:"host"`
+	Base              string            `json:"base"`
+	Up                bool              `json:"up"`
+	Why               string            `json:"why,omitempty"`
+	Installed         int               `json:"installed"`
+	Resident          []string          `json:"resident,omitempty"`
+	Servable          bool              `json:"servable"`
+	Hosted            bool              `json:"hosted,omitempty"`
+	Wire              string            `json:"wire,omitempty"`
+	Credential        string            `json:"credential,omitempty"`
+	DeclaredBy        string            `json:"declared_by,omitempty"`
+	Profiles          []string          `json:"profiles,omitempty"`
+	Domain            string            `json:"domain,omitempty"`
+	AvailabilityCause AvailabilityCause `json:"availability_cause,omitempty"`
 }
+
+// AvailabilityCause classifies a failed listing observation without interpreting
+// its diagnostic text. An empty value means no cause was established.
+type AvailabilityCause string
+
+const (
+	AvailabilityTransportUnavailable AvailabilityCause = "transport_unavailable"
+	AvailabilityCredential           AvailabilityCause = "credential"
+	AvailabilityRights               AvailabilityCause = "rights"
+	AvailabilityConfiguration        AvailabilityCause = "configuration"
+	AvailabilityMalformed            AvailabilityCause = "malformed"
+	AvailabilityUnknown              AvailabilityCause = "unknown"
+	AvailabilityOther                AvailabilityCause = "other"
+)
 
 // Holder is one hold of this machine's accelerator memory, as
 // abstraction.resource/table@1 reports it. The router measures nothing:

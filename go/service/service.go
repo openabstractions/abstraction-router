@@ -183,11 +183,42 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 		action, resource = ActionRoute, ResourceRoutes
 	}
 	if err := r.authorize(action, resource); err != nil {
+		if request.Op == router.OpOffer {
+			var refusal *wire.ServiceError
+			if errors.As(err, &refusal) {
+				switch refusal.Code {
+				case CodeForbidden:
+					return router.Response{}, &offerRefusal{outcome: wire.OfferOutcomeNotPermitted}
+				case CodeUnavailable:
+					return router.Response{}, &offerRefusal{outcome: wire.OfferOutcomeUnavailable}
+				}
+			}
+		}
 		return router.Response{}, err
 	}
 	// Caller is created by ReceiveFramed after checking router.Bound, never decoded.
 	out := r.provider.Answer(request, r.call.Caller)
+	if request.Op == router.OpOffer {
+		return out, providerOfferResponseError(out)
+	}
 	return out, providerResponseError(out)
+}
+
+func providerOfferResponseError(out router.Response) error {
+	if out.Err() == nil {
+		return nil
+	}
+	outcome := wire.OfferOutcomeUnavailable
+	switch out.Code {
+	case router.CodeInvalidRequest:
+		outcome = wire.OfferOutcomeInvalid
+	case CodeForbidden:
+		outcome = wire.OfferOutcomeForbidden
+	case "not_permitted":
+		outcome = wire.OfferOutcomeNotPermitted
+	}
+	// A provider response cannot establish a framing or caller-binding failure.
+	return &offerRefusal{outcome: outcome}
 }
 
 // providerResponseError maps the router's outcome words to the service error
@@ -212,7 +243,7 @@ func observation(r router.Response) wire.Observation {
 // structs' field sets still match, so a field added to either without this
 // function updated fails a test instead of dropping silently.
 func toWireAlias(a router.Alias) wire.Alias {
-	return wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles, HeldIn: a.HeldIn, ContextLength: a.ContextLength}
+	return wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles, HeldIn: a.HeldIn, ContextLength: a.ContextLength, EffectiveContextLength: a.EffectiveContextLength}
 }
 
 // toWireFamily is the one place that carries router.Family's fields onto the
@@ -242,7 +273,12 @@ func toWireComponent(c router.Component) wire.Component {
 // every other field copies by name. convert_test.go's reflection parity test
 // covers it the same way as toWireAlias.
 func toWireHostState(h router.HostState) wire.HostState {
-	return wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable, Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy, Profiles: h.Profiles, Domain: h.Domain}
+	state := wire.HostState{Host: h.Host, Base: h.Base, Up: h.Up, Why: h.Why, Installed: int64(h.Installed), Resident: h.Resident, Servable: h.Servable, Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy, Profiles: h.Profiles, Domain: h.Domain}
+	if h.AvailabilityCause != "" {
+		cause := wire.AvailabilityCause(h.AvailabilityCause)
+		state.AvailabilityCause = &cause
+	}
+	return state
 }
 
 // askTimeLayout is the layout toWireAsk formats router.Ask's At into; it is
@@ -326,3 +362,41 @@ func (answer answerFunc) Pick(request wire.PickRequest) (wire.PickResult, error)
 	value := wire.PickResult{Observation: observation(out), Decision: toWireDecision(*out.Decision)}
 	return value, nil
 }
+
+// fromWireOfferRequest is the one place that carries wire.OfferRequest's
+// fields onto router.Request for Offer. Op is computed: every Offer call
+// performs router.OpOffer. Placement moves from the generated closed enum to
+// its wire word; a value outside the enum reads "" and the provider refuses
+// it as invalid_request. convert_test.go's reverse parity test covers it.
+func fromWireOfferRequest(o wire.OfferRequest) router.Request {
+	placement, _ := o.Placement.WireName()
+	return router.Request{Op: router.OpOffer, Profile: o.Profile, Placement: placement, Reserve: o.Reserve, Fresh: o.Fresh}
+}
+
+// toWireOffer is the one place that carries router.Offer's fields onto the
+// generated wire.Offer. convert_test.go's reflection parity test covers it.
+func toWireOffer(o router.Offer) wire.Offer {
+	return wire.Offer{Family: o.Family, Names: o.Names, Servers: o.Servers, Context: o.Context, ContextSource: wire.ContextSource(o.ContextSource), Input: o.Input, Unknown: o.Unknown}
+}
+
+func (answer answerFunc) Offer(request wire.OfferRequest) (wire.OfferSnapshot, error) {
+	out, err := answer(fromWireOfferRequest(request))
+	if err != nil {
+		var refusal *offerRefusal
+		if errors.As(err, &refusal) {
+			return wire.OfferSnapshot{Outcome: refusal.outcome, Offers: []wire.Offer{}}, nil
+		}
+		return wire.OfferSnapshot{}, err
+	}
+	value := wire.OfferSnapshot{Outcome: wire.OfferOutcomeOffered, Observation: observation(out), Offers: []wire.Offer{}}
+	for _, o := range out.Offers {
+		value.Offers = append(value.Offers, toWireOffer(o))
+	}
+	return value, nil
+}
+
+// offerRefusal carries a business decision made after caller binding. Older
+// router methods retain their published response channel.
+type offerRefusal struct{ outcome wire.OfferOutcome }
+
+func (e *offerRefusal) Error() string { return "router offer: " + e.outcome.String() }

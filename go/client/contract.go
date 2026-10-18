@@ -10,6 +10,21 @@ import (
 
 type Alias = wire.Alias
 
+type AvailabilityCause = wire.AvailabilityCause
+
+const (
+	AvailabilityCauseTransportUnavailable = wire.AvailabilityCauseTransportUnavailable
+	AvailabilityCauseCredential           = wire.AvailabilityCauseCredential
+	AvailabilityCauseRights               = wire.AvailabilityCauseRights
+	AvailabilityCauseConfiguration        = wire.AvailabilityCauseConfiguration
+	AvailabilityCauseMalformed            = wire.AvailabilityCauseMalformed
+	AvailabilityCauseUnknown              = wire.AvailabilityCauseUnknown
+	AvailabilityCauseOther                = wire.AvailabilityCauseOther
+)
+
+// AvailabilityCauseValues returns every member of AvailabilityCause in declaration order, in a new slice.
+func AvailabilityCauseValues() []AvailabilityCause { return wire.AvailabilityCauseValues() }
+
 type Ask = wire.Ask
 
 type Caller = wire.Caller
@@ -23,6 +38,44 @@ type Family = wire.Family
 type HostState = wire.HostState
 
 type Observation = wire.Observation
+
+type Offer = wire.Offer
+
+type OfferOutcome = wire.OfferOutcome
+
+const (
+	OfferOutcomeOffered      = wire.OfferOutcomeOffered
+	OfferOutcomeInvalid      = wire.OfferOutcomeInvalid
+	OfferOutcomeUnavailable  = wire.OfferOutcomeUnavailable
+	OfferOutcomeForbidden    = wire.OfferOutcomeForbidden
+	OfferOutcomeNotPermitted = wire.OfferOutcomeNotPermitted
+)
+
+func OfferOutcomeValues() []OfferOutcome { return wire.OfferOutcomeValues() }
+
+type Placement = wire.Placement
+
+const (
+	PlacementLocal  = wire.PlacementLocal
+	PlacementHosted = wire.PlacementHosted
+	PlacementAny    = wire.PlacementAny
+)
+
+// PlacementValues returns every member of Placement in declaration order, in a new slice.
+func PlacementValues() []Placement { return wire.PlacementValues() }
+
+type ContextSource = wire.ContextSource
+
+const (
+	ContextSourceEffective = wire.ContextSourceEffective
+	ContextSourceMaximum   = wire.ContextSourceMaximum
+	ContextSourceDefault   = wire.ContextSourceDefault
+	ContextSourceUnknown   = wire.ContextSourceUnknown
+	ContextSourceNone      = wire.ContextSourceNone
+)
+
+// ContextSourceValues returns every member of ContextSource in declaration order, in a new slice.
+func ContextSourceValues() []ContextSource { return wire.ContextSourceValues() }
 
 type ServiceErrorCode = wire.ServiceErrorCode
 

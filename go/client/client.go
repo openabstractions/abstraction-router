@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"github.com/openabstractions/abstraction-identity/listen"
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
 	"os"
@@ -16,6 +17,8 @@ type HostAllowance = wire.HostAllowance
 type ModelsSnapshot = wire.ModelsSnapshot
 type HostsSnapshot = wire.HostsSnapshot
 type PickResult = wire.PickResult
+type OfferRequest = wire.OfferRequest
+type OfferSnapshot = wire.OfferSnapshot
 type ServiceError = wire.ServiceError
 
 type Client struct{ transport listen.FrameClient }
@@ -67,4 +70,29 @@ func (c *Client) PickContext(ctx context.Context, request PickRequest) (PickResu
 		return PickResult{}, err
 	}
 	return wire.NewRouterClient(c.transport.WithContext(ctx)).Pick(request)
+}
+func (c *Client) Offer(request OfferRequest) (OfferSnapshot, error) {
+	return c.OfferContext(context.Background(), request)
+}
+
+// OfferContext uses ctx only for this operation.
+func (c *Client) OfferContext(ctx context.Context, request OfferRequest) (OfferSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return OfferSnapshot{}, err
+	}
+	snapshot, err := wire.NewRouterClient(c.transport.WithContext(ctx)).Offer(request)
+	if err != nil {
+		return OfferSnapshot{}, err
+	}
+	return validateOfferSnapshot(snapshot)
+}
+
+func validateOfferSnapshot(snapshot OfferSnapshot) (OfferSnapshot, error) {
+	if !snapshot.Outcome.Known() {
+		return OfferSnapshot{}, errors.New("router: invalid offer outcome")
+	}
+	if snapshot.Outcome != wire.OfferOutcomeOffered && (len(snapshot.Offers) != 0 || snapshot.Observation != (wire.Observation{})) {
+		return OfferSnapshot{}, errors.New("router: refused offer carries data")
+	}
+	return snapshot, nil
 }

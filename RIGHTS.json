@@ -1,0 +1,64 @@
+{
+  "format": "openabstractions-rights@1",
+  "owner": "abstraction.router",
+  "generated": "Do not edit. Run rights-catalogue --write from the existing compiled catalogue.",
+  "source": "github.com/openabstractions/abstraction-facade/go/grants",
+  "availability": "Compiled catalogue reference: served and selector support use the named receiving-service context. Connected-runtime discovery supplies current availability. Facade Applications is experimental. Definitions grant no access.",
+  "compiled_receivers": {
+    "credentials": true,
+    "application_logs": true
+  },
+  "definitions": [
+    {
+      "definition": {
+        "action": "abstraction.router/inventory.read",
+        "owner_contract": "abstraction.router/router@1",
+        "operations": [
+          "abstraction.router/router@1#Models",
+          "abstraction.router/router@1#Hosts",
+          "abstraction.router/router@1#Offer"
+        ],
+        "resource_profile": "abstraction.rights/legacy-exact-string@1",
+        "resource_type": "string (legacy exact resource)",
+        "enforced_by": [
+          "abstraction.router/router@1"
+        ],
+        "disclosure": "Read inventory/offer candidates; no loading/unloading.",
+        "lifecycle": "Account-wide models/servers, credential names, routing observations. First use asks the person: an app that lists models has no other path (default-policy D5).",
+        "first_use": "exact",
+        "served": true
+      },
+      "label": "abstraction.router/inventory.read",
+      "supported_selectors": [],
+      "first_use_selectors": [],
+      "collection": "Account-wide models/servers, credential names, routing observations. First use asks the person: an app that lists models has no other path (default-policy D5).",
+      "all_effect": "",
+      "request_type": "string (legacy exact resource)"
+    },
+    {
+      "definition": {
+        "action": "abstraction.router/route",
+        "owner_contract": "abstraction.router/router@1",
+        "operations": [
+          "abstraction.router/router@1#Pick"
+        ],
+        "resource_profile": "abstraction.rights/legacy-exact-string@1",
+        "resource_type": "string (legacy exact resource)",
+        "enforced_by": [
+          "abstraction.router/router@1"
+        ],
+        "disclosure": "Select server; no execution by router.",
+        "lifecycle": "Routing across all models/servers; actual inference needs complete per selected host.",
+        "first_use": "none",
+        "served": true
+      },
+      "label": "abstraction.router/route",
+      "supported_selectors": [],
+      "first_use_selectors": [],
+      "collection": "Routing across all models/servers; actual inference needs complete per selected host.",
+      "all_effect": "",
+      "request_type": "string (legacy exact resource)"
+    }
+  ],
+  "bundles": []
+}

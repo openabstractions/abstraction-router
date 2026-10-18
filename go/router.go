@@ -89,12 +89,21 @@ func New(hosts ...*Host) *Router { return &Router{hosts: hosts} }
 // Survey reads every host once, in parallel. It is the only thing here that
 // touches a host, and it only reads.
 func (r *Router) Survey() {
+	_ = r.SurveyContext(context.Background())
+}
+
+// SurveyContext performs a fresh read for one caller. Cancellation reaches
+// each listing request and leaves the previous snapshot intact.
+func (r *Router) SurveyContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	type read struct {
-		state         HostState
-		installed     []string
-		resident      []string
-		profiles      map[string][]string
-		contextLength map[string]int64
+		state     HostState
+		installed []string
+		resident  []string
+		profiles  map[string][]string
+		contexts  map[string]modelContext
 		// domain holds the hosts a remote runtime reports.
 		domain []HostState
 	}
@@ -105,29 +114,44 @@ func (r *Router) Survey() {
 		wg.Add(1)
 		go func(i int, h *Host) {
 			defer wg.Done()
+			if ctx.Err() != nil {
+				return
+			}
 			s := HostState{Host: h.Name, Base: h.Base, Servable: h.Servable(), Hosted: h.Hosted, Wire: h.Wire, Credential: h.Credential, DeclaredBy: h.DeclaredBy,
 				Profiles: h.HostProfiles(), Domain: h.Domain}
 			if h.Hosted {
-				installed, why := r.readHosted(h)
+				installed, why, cause := r.readHosted(ctx, h)
 				if why != "" {
 					s.Why = why
+					s.AvailabilityCause = cause
 					reads[i] = read{state: s}
 					return
 				}
 				s.Up, s.Installed = true, len(installed)
 				reads[i] = read{state: s, installed: installed}
+				// A remote runtime's listing carries the context its own
+				// router reports for each name (remote.go).
+				if h.modelContexts != nil {
+					reads[i].contexts = h.modelContexts(ctx, h, installed)
+				}
+				// A remote runtime's listing carries the profiles its own
+				// router reports for each name (ROUTE-D9).
+				if h.modelProfiles != nil {
+					reads[i].profiles = h.modelProfiles(ctx, h, installed)
+				}
 				if h.remote != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+					remoteCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 					defer cancel()
-					if domain, err := h.remoteHosts(ctx); err == nil {
+					if domain, err := h.remoteHosts(remoteCtx); err == nil {
 						reads[i].domain = domain
 					}
 				}
 				return
 			}
-			installed, err := h.installed(h)
+			installed, err := h.installed(ctx, h)
 			if err != nil {
 				s.Why = err.Error()
+				s.AvailabilityCause = causeOf(err)
 				reads[i] = read{state: s}
 				return
 			}
@@ -136,32 +160,58 @@ func (r *Router) Survey() {
 			// or one that is briefly unreachable on that route alone, still has
 			// its installed list. Resident stays unset and Why names what
 			// failed; the installed list is not discarded for it.
-			resident, err := h.resident(h)
+			resident, err := h.resident(ctx, h)
 			if err != nil {
 				s.Why = err.Error()
-				reads[i] = read{state: s, installed: installed}
+				reads[i] = read{state: s, installed: installed, profiles: h.declaredProfiles(installed)}
 				return
 			}
 			s.Resident = resident
 			var profiles map[string][]string
-			var contextLength map[string]int64
-			if h.modelProfiles != nil {
-				profiles = h.modelProfiles(h, append(slices.Clone(installed), resident...))
+			var contexts map[string]modelContext
+			modelNames := append(slices.Clone(installed), resident...)
+			if h.modelMetadata != nil {
+				metadata := h.modelMetadata(ctx, h, modelNames)
+				profiles = make(map[string][]string, len(metadata))
+				contexts = make(map[string]modelContext, len(metadata))
+				for name, observed := range metadata {
+					profiles[name] = observed.profiles
+					contexts[name] = observed.context
+				}
+			} else {
+				if h.modelProfiles != nil {
+					profiles = h.modelProfiles(ctx, h, modelNames)
+				}
+				if h.modelContexts != nil {
+					contexts = h.modelContexts(ctx, h, modelNames)
+				}
 			}
-			if h.modelContextLength != nil {
-				contextLength = h.modelContextLength(h, append(slices.Clone(installed), resident...))
+			// A declaration that names its models per profile outranks what
+			// the host's own metadata reports (ROUTE-D9).
+			if declared := h.declaredProfiles(modelNames); declared != nil {
+				profiles = declared
 			}
-			reads[i] = read{state: s, installed: installed, resident: resident, profiles: profiles, contextLength: contextLength}
+			reads[i] = read{state: s, installed: installed, resident: resident, profiles: profiles, contexts: contexts}
 		}(i, h)
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// The storage inventory's descriptors are the model identity. A host's
 	// model is matched to one by the store's own naming (held.go); a model no
 	// descriptor names keeps the host's alias as its family, and the family
 	// says so.
 	prov := index(r.Held())
-	byFamily := map[string]map[string]*Alias{}
+	// A family lists one alias per server and name. Two servers serving the
+	// same name are two entries, each carrying its own server's residency and
+	// context; a request naming that name still reaches the family once.
+	type served struct {
+		host int
+		name string
+	}
+	byFamily := map[string]map[served]*Alias{}
 	pick := map[string]map[string]string{}
 	profiles := map[string]map[string][]string{}
 	aliasFamily := map[string]string{}
@@ -180,13 +230,16 @@ func (r *Router) Survey() {
 			aliasFamily[strings.ToLower(name)] = fam
 			names := byFamily[fam]
 			if names == nil {
-				names = map[string]*Alias{}
+				names = map[served]*Alias{}
 				byFamily[fam] = names
 			}
-			if a, seen := names[name]; seen {
+			key := served{host: i, name: name}
+			if a, seen := names[key]; seen {
+				// The same server lists a resident name again as installed.
 				a.Resident = a.Resident || resident
 			} else {
-				names[name] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable(), Hosted: h.Hosted, Profiles: reads[i].profiles[name], ContextLength: reads[i].contextLength[name]}
+				context := reads[i].contexts[name]
+				names[key] = &Alias{Host: h.Name, Name: name, Resident: resident, Servable: h.Servable(), Hosted: h.Hosted, Profiles: reads[i].profiles[name], ContextLength: context.maximum, EffectiveContextLength: context.effective}
 			}
 			if pick[fam] == nil {
 				pick[fam] = map[string]string{}
@@ -209,11 +262,21 @@ func (r *Router) Survey() {
 
 	families := make([]Family, 0, len(byFamily))
 	for fam, names := range byFamily {
-		f := Family{Family: fam}
-		for _, a := range names {
-			f.Names = append(f.Names, *a)
+		keys := make([]served, 0, len(names))
+		for key := range names {
+			keys = append(keys, key)
 		}
-		sort.Slice(f.Names, func(i, j int) bool { return f.Names[i].Name < f.Names[j].Name })
+		// By name, then by the servers' preference order.
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].name != keys[j].name {
+				return keys[i].name < keys[j].name
+			}
+			return keys[i].host < keys[j].host
+		})
+		f := Family{Family: fam}
+		for _, key := range keys {
+			f.Names = append(f.Names, *names[key])
+		}
 		families = append(families, f)
 	}
 	sort.Slice(families, func(i, j int) bool { return families[i].Family < families[j].Family })
@@ -223,6 +286,9 @@ func (r *Router) Survey() {
 	families = prov.compose(families)
 
 	holders, why := r.readHolders(false)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	states := make([]HostState, 0, len(reads))
 	for i := range reads {
 		states = append(states, reads[i].state)
@@ -233,6 +299,7 @@ func (r *Router) Survey() {
 	defer r.mu.Unlock()
 	r.snap = snapshot{at: time.Now(), hosts: states, families: families, pick: pick, profiles: profiles,
 		aliasFamily: aliasFamily, holders: holders, holdersWhy: why}
+	return nil
 }
 
 func (r *Router) latest(fresh bool) snapshot {
@@ -316,6 +383,26 @@ func cut(k string) (string, string, bool) {
 // become the thing that holds weights.
 func (r *Router) Route(req Request) (*Decision, time.Time) {
 	s := r.latest(req.Fresh)
+	return r.routeSnapshot(req, s)
+}
+
+// RouteContext uses a cancelable fresh survey when requested. It never
+// converts a caller cancellation into a host availability verdict.
+func (r *Router) RouteContext(ctx context.Context, req Request) (*Decision, time.Time, error) {
+	if req.Fresh {
+		if err := r.SurveyContext(ctx); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, time.Time{}, err
+	}
+	s := r.latest(false)
+	d, at := r.routeSnapshot(req, s)
+	return d, at, nil
+}
+
+func (r *Router) routeSnapshot(req Request, s snapshot) (*Decision, time.Time) {
 	fam := s.familyOf(req.Model)
 	d := &Decision{Asked: req.Model, Family: fam, Authorised: req.Hosts}
 	if fam == "" {
@@ -458,10 +545,11 @@ func (s snapshot) pickServing(fam string, h *Host, profile string) (string, bool
 	return "", false
 }
 
-// anyServes reports whether a servable host serves profile: for a host whose
-// models report their own profiles, one of those models; for another host,
-// its own profiles. A router with no servable host answers true, and its
-// decisions keep reading not-here.
+// anyServes reports whether a servable host serves profile: for a host with
+// models, one of them, each judged by its own profiles or, when it reports
+// none, its host's (snapshot.serves); for a host with none, its own
+// profiles. A router with no servable host answers true, and its decisions
+// keep reading not-here.
 func (r *Router) anyServes(s snapshot, profile string) bool {
 	servable := false
 	for _, h := range r.Hosts() {
@@ -469,17 +557,20 @@ func (r *Router) anyServes(s snapshot, profile string) bool {
 			continue
 		}
 		servable = true
-		models, reported := s.profiles[h.Name]
-		if !reported || len(models) == 0 {
-			if has(h.HostProfiles(), profile) {
-				return true
+		aliases := 0
+		for _, f := range s.families {
+			for _, a := range f.Names {
+				if a.Host != h.Name {
+					continue
+				}
+				aliases++
+				if s.serves(h, a.Name, profile) {
+					return true
+				}
 			}
-			continue
 		}
-		for _, p := range models {
-			if has(p, profile) {
-				return true
-			}
+		if aliases == 0 && has(h.HostProfiles(), profile) {
+			return true
 		}
 	}
 	return !servable

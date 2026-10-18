@@ -66,6 +66,138 @@ fn esc(out: &mut Vec<u8>, s: &str) {
     out.push(b'"');
 }
 
+/// Names of the open vocabulary AvailabilityCause. A reader keeps a name it has never heard
+/// of, so fields carry `String` and a match needs an arm for the rest.
+pub mod availability_cause {
+    pub const TRANSPORT_UNAVAILABLE: &str = "transport_unavailable";
+    pub const CREDENTIAL: &str = "credential";
+    pub const RIGHTS: &str = "rights";
+    pub const CONFIGURATION: &str = "configuration";
+    pub const MALFORMED: &str = "malformed";
+    pub const UNKNOWN: &str = "unknown";
+    pub const OTHER: &str = "other";
+    /// Every name this definition declares, in declaration order.
+    pub const ALL: [&str; 7] = [TRANSPORT_UNAVAILABLE, CREDENTIAL, RIGHTS, CONFIGURATION, MALFORMED, UNKNOWN, OTHER];
+}
+
+/// The closed vocabulary Placement. A reader refuses a name it does not list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Placement {
+    Local,
+    Hosted,
+    Any,
+}
+
+impl Placement {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Local, Self::Hosted, Self::Any];
+
+    /// The member's name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Hosted => "hosted",
+            Self::Any => "any",
+        }
+    }
+
+    /// The member a wire name spells, or `None` for a name this vocabulary refuses.
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "local" => Some(Self::Local),
+            "hosted" => Some(Self::Hosted),
+            "any" => Some(Self::Any),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Placement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for Placement {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for Placement {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+/// Names of the open vocabulary ContextSource. A reader keeps a name it has never heard
+/// of, so fields carry `String` and a match needs an arm for the rest.
+pub mod context_source {
+    pub const EFFECTIVE: &str = "effective";
+    pub const MAXIMUM: &str = "maximum";
+    pub const DEFAULT: &str = "default";
+    pub const UNKNOWN: &str = "unknown";
+    pub const NONE: &str = "none";
+    /// Every name this definition declares, in declaration order.
+    pub const ALL: [&str; 5] = [EFFECTIVE, MAXIMUM, DEFAULT, UNKNOWN, NONE];
+}
+
+/// The closed vocabulary OfferOutcome. A reader refuses a name it does not list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum OfferOutcome {
+    Offered,
+    Invalid,
+    Unavailable,
+    Forbidden,
+    NotPermitted,
+}
+
+impl OfferOutcome {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 5] = [Self::Offered, Self::Invalid, Self::Unavailable, Self::Forbidden, Self::NotPermitted];
+
+    /// The member's name on the wire.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Offered => "offered",
+            Self::Invalid => "invalid",
+            Self::Unavailable => "unavailable",
+            Self::Forbidden => "forbidden",
+            Self::NotPermitted => "not_permitted",
+        }
+    }
+
+    /// The member a wire name spells, or `None` for a name this vocabulary refuses.
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "offered" => Some(Self::Offered),
+            "invalid" => Some(Self::Invalid),
+            "unavailable" => Some(Self::Unavailable),
+            "forbidden" => Some(Self::Forbidden),
+            "not_permitted" => Some(Self::NotPermitted),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for OfferOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for OfferOutcome {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for OfferOutcome {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 /// Names of the open vocabulary ServiceErrorCode. A reader keeps a name it has never heard
 /// of, so fields carry `String` and a match needs an arm for the rest.
 pub mod service_error_code {
@@ -130,10 +262,15 @@ pub struct Observation {
 /// storage inventory stores holding an object this alias's own name or digest
 /// matches, in store order; empty when no store's object matches this name.
 /// host is empty exactly for a name no host serves, which a store holds and
-/// which is never resident or servable. context_length is the model's context
-/// window in tokens, read from the host's own metadata without loading it (LM
-/// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-/// max_context_window); zero when the host reports none.
+/// which is never resident or servable. context_length is the model's maximum
+/// supported context window in tokens, read from host metadata without loading
+/// it (LM Studio's max_context_length, Ollama's model_info context_length,
+/// Lemonade's max_context_window); zero when the host reports none.
+/// effective_context_length is a positive per-request context limit the host
+/// currently reports: the loaded value when the model is resident, otherwise
+/// its configured value when the host reports one (Lemonade's context_length);
+/// zero when unknown. A nonpositive or contradictory effective value is
+/// omitted.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Alias {
     pub host: String,
@@ -144,6 +281,7 @@ pub struct Alias {
     pub profiles: Vec<String>,
     pub held_in: Vec<String>,
     pub context_length: i64,
+    pub effective_context_length: i64,
 }
 
 /// One role-bearing object a store holds, folded into a family's detail rather
@@ -158,19 +296,20 @@ pub struct Component {
     pub name: String,
 }
 
-/// held_in names the storage inventory stores holding an object of this family,
-/// in store order, whether or not a host serves it; empty when no store reports
-/// one. A family whose names are all unservable is on this machine and answered
-/// by nothing. family_source is descriptor when the storage inventory published
-/// an abstraction.model/descriptor@1 naming this family, and alias when no
-/// descriptor names it and a program's own name for the model is the family;
-/// empty when the service reports neither. components lists a projector, VAE or
-/// other role-bearing object a store holds and this family's descriptor named
-/// as its base, or, when no descriptor could derive a base for it, an object
-/// that is this family's only content — held_in and family_source cover the
-/// family it was folded into or the family it stands in for either way;
-/// components exists to say the family answers for a part, not a whole model,
-/// when that is what it is.
+/// names lists one alias per server and name; a name two servers serve appears
+/// twice, once per server. held_in names the storage inventory stores holding
+/// an object of this family, in store order, whether or not a host serves it;
+/// empty when no store reports one. A family whose names are all unservable is
+/// on this machine and answered by nothing. family_source is descriptor when
+/// the storage inventory published an abstraction.model/descriptor@1 naming
+/// this family, and alias when no descriptor names it and a program's own name
+/// for the model is the family; empty when the service reports neither.
+/// components lists a projector, VAE or other role-bearing object a store holds
+/// and this family's descriptor named as its base, or, when no descriptor could
+/// derive a base for it, an object that is this family's only content —
+/// held_in and family_source cover the family it was folded into or the family
+/// it stands in for either way; components exists to say the family answers for
+/// a part, not a whole model, when that is what it is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Family {
     pub family: String,
@@ -216,6 +355,7 @@ pub struct HostState {
     pub declared_by: String,
     pub profiles: Vec<String>,
     pub domain: String,
+    pub availability_cause: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -258,6 +398,50 @@ pub struct PickResult {
     pub decision: Decision,
 }
 
+/// profile is a profiles member or <owner>/<name>@<n>; empty is chat. placement
+/// local counts servers on this machine, hosted counts hosted servers and
+/// remote runtimes, any counts both. reserve is the output budget in tokens the
+/// caller plans to keep for the answer; 0 keeps none. fresh surveys the servers
+/// first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfferRequest {
+    pub profile: String,
+    pub placement: Placement,
+    pub reserve: i64,
+    pub fresh: bool,
+}
+
+/// names are the counted aliases in UTF-8 byte order; the first is the name to
+/// ask for. servers are the servers counted, in preference order. context is
+/// the smallest bound across the counted aliases, 0 when context_source is
+/// unknown or none. context_source says where the smallest bound came from:
+/// effective for a server-reported request limit, maximum for a model maximum,
+/// default for the profile's catalogue default when no server reported a
+/// length, unknown when a counted server fixes its window at load and reported
+/// none, none for a profile without a context window. input is context minus
+/// the request's reserve, 0 when nothing remains or context is 0. unknown names
+/// the aliases whose server reported no usable request limit, as
+/// <server>/<name>.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Offer {
+    pub family: String,
+    pub names: Vec<String>,
+    pub servers: Vec<String>,
+    pub context: i64,
+    pub context_source: String,
+    pub input: i64,
+    pub unknown: Vec<String>,
+}
+
+/// Exactly offered carries observation and offers. Every refusal carries an
+/// empty observation and no offers; it makes no model availability claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfferSnapshot {
+    pub observation: Observation,
+    pub offers: Vec<Offer>,
+    pub outcome: OfferOutcome,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct OARouterModelsArguments {
     fresh: bool,
@@ -271,6 +455,11 @@ struct OARouterHostsArguments {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct OARouterPickArguments {
     request: PickRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OARouterOfferArguments {
+    request: OfferRequest,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -309,6 +498,11 @@ struct OARouterHostsResult {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct OARouterPickResult {
     value: PickResult,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OARouterOfferResult {
+    value: OfferSnapshot,
 }
 
 fn enc_host_allowance(out: &mut Vec<u8>, v: &HostAllowance, depth: i32) {
@@ -357,6 +551,36 @@ fn enc_pick_request(out: &mut Vec<u8>, v: &PickRequest, depth: i32) {
     out.push(b'}');
 }
 
+fn enc_offer_request(out: &mut Vec<u8>, v: &OfferRequest, depth: i32) {
+    out.push(b'{');
+    out.push(b'\n');
+    pad(out, depth + 1);
+    esc(out, "profile");
+    out.extend_from_slice(b": ");
+    esc(out, &v.profile);
+    out.push(b',');
+    out.push(b'\n');
+    pad(out, depth + 1);
+    esc(out, "placement");
+    out.extend_from_slice(b": ");
+    esc(out, v.placement.as_str());
+    out.push(b',');
+    out.push(b'\n');
+    pad(out, depth + 1);
+    esc(out, "reserve");
+    out.extend_from_slice(b": ");
+    num(out, v.reserve);
+    out.push(b',');
+    out.push(b'\n');
+    pad(out, depth + 1);
+    esc(out, "fresh");
+    out.extend_from_slice(b": ");
+    out.extend_from_slice(if v.fresh { b"true" } else { b"false" });
+    out.push(b'\n');
+    pad(out, depth);
+    out.push(b'}');
+}
+
 fn enc_oa_router_models_arguments(out: &mut Vec<u8>, v: &OARouterModelsArguments, depth: i32) {
     out.push(b'{');
     out.push(b'\n');
@@ -388,6 +612,18 @@ fn enc_oa_router_pick_arguments(out: &mut Vec<u8>, v: &OARouterPickArguments, de
     esc(out, "request");
     out.extend_from_slice(b": ");
     enc_pick_request(out, &v.request, depth + 1);
+    out.push(b'\n');
+    pad(out, depth);
+    out.push(b'}');
+}
+
+fn enc_oa_router_offer_arguments(out: &mut Vec<u8>, v: &OARouterOfferArguments, depth: i32) {
+    out.push(b'{');
+    out.push(b'\n');
+    pad(out, depth + 1);
+    esc(out, "request");
+    out.extend_from_slice(b": ");
+    enc_offer_request(out, &v.request, depth + 1);
     out.push(b'\n');
     pad(out, depth);
     out.push(b'}');
@@ -1194,6 +1430,7 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
     let mut field_profiles: Vec<String> = Default::default();
     let mut field_held_in: Vec<String> = Default::default();
     let mut field_context_length: i64 = Default::default();
+    let mut field_effective_context_length: i64 = Default::default();
     let mut seen: u32 = 0;
     r.skip_ws();
     if r.at() != b'}' {
@@ -1266,6 +1503,13 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
                     seen |= 128;
                     field_context_length = r.integer(i64::MIN, i64::MAX)?;
                 }
+                "effective_context_length" => {
+                    if seen & 256 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 256;
+                    field_effective_context_length = r.integer(i64::MIN, i64::MAX)?;
+                }
                 _ => {
                     r.skip_value()?;
                 }
@@ -1294,6 +1538,7 @@ fn decode_alias(r: &mut Reader) -> Result<Alias, Refusal> {
         profiles: field_profiles,
         held_in: field_held_in,
         context_length: field_context_length,
+        effective_context_length: field_effective_context_length,
     })
 }
 
@@ -1541,6 +1786,7 @@ fn decode_host_state(r: &mut Reader) -> Result<HostState, Refusal> {
     let mut field_declared_by: String = Default::default();
     let mut field_profiles: Vec<String> = Default::default();
     let mut field_domain: String = Default::default();
+    let mut field_availability_cause: Option<String> = None;
     let mut seen: u32 = 0;
     r.skip_ws();
     if r.at() != b'}' {
@@ -1648,6 +1894,13 @@ fn decode_host_state(r: &mut Reader) -> Result<HostState, Refusal> {
                     seen |= 4096;
                     field_domain = r.string()?;
                 }
+                "availability_cause" => {
+                    if seen & 8192 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 8192;
+                    field_availability_cause = Some(r.string()?);
+                }
                 _ => {
                     r.skip_value()?;
                 }
@@ -1681,6 +1934,7 @@ fn decode_host_state(r: &mut Reader) -> Result<HostState, Refusal> {
         declared_by: field_declared_by,
         profiles: field_profiles,
         domain: field_domain,
+        availability_cause: field_availability_cause,
     })
 }
 
@@ -2080,6 +2334,273 @@ fn decode_pick_result(r: &mut Reader) -> Result<PickResult, Refusal> {
     })
 }
 
+fn decode_offer_request(r: &mut Reader) -> Result<OfferRequest, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_profile: String = Default::default();
+    let mut field_placement: Option<String> = None;
+    let mut field_reserve: i64 = Default::default();
+    let mut field_fresh: bool = Default::default();
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "profile" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_profile = r.string()?;
+                }
+                "placement" => {
+                    if seen & 2 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 2;
+                    field_placement = Some(r.string()?);
+                }
+                "reserve" => {
+                    if seen & 4 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 4;
+                    field_reserve = r.integer(i64::MIN, i64::MAX)?;
+                }
+                "fresh" => {
+                    if seen & 8 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 8;
+                    field_fresh = r.boolean()?;
+                }
+                _ => {
+                    return r.refuse("unknown_field");
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 15 != 15 {
+        return r.refuse("missing_field");
+    }
+    let Some(field_placement) = field_placement.as_deref().and_then(Placement::from_wire) else {
+        return r.refuse("bad_enum");
+    };
+    Ok(OfferRequest {
+        profile: field_profile,
+        placement: field_placement,
+        reserve: field_reserve,
+        fresh: field_fresh,
+    })
+}
+
+fn decode_offer(r: &mut Reader) -> Result<Offer, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_family: String = Default::default();
+    let mut field_names: Vec<String> = Default::default();
+    let mut field_servers: Vec<String> = Default::default();
+    let mut field_context: i64 = Default::default();
+    let mut field_context_source: String = Default::default();
+    let mut field_input: i64 = Default::default();
+    let mut field_unknown: Vec<String> = Default::default();
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "family" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_family = r.string()?;
+                }
+                "names" => {
+                    if seen & 2 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 2;
+                    field_names = r.str_list()?;
+                }
+                "servers" => {
+                    if seen & 4 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 4;
+                    field_servers = r.str_list()?;
+                }
+                "context" => {
+                    if seen & 8 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 8;
+                    field_context = r.integer(i64::MIN, i64::MAX)?;
+                }
+                "context_source" => {
+                    if seen & 16 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 16;
+                    field_context_source = r.string()?;
+                }
+                "input" => {
+                    if seen & 32 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 32;
+                    field_input = r.integer(i64::MIN, i64::MAX)?;
+                }
+                "unknown" => {
+                    if seen & 64 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 64;
+                    field_unknown = r.str_list()?;
+                }
+                _ => {
+                    r.skip_value()?;
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 63 != 63 {
+        return r.refuse("missing_field");
+    }
+    Ok(Offer {
+        family: field_family,
+        names: field_names,
+        servers: field_servers,
+        context: field_context,
+        context_source: field_context_source,
+        input: field_input,
+        unknown: field_unknown,
+    })
+}
+
+fn decode_offer_snapshot(r: &mut Reader) -> Result<OfferSnapshot, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_observation: Observation = Default::default();
+    let mut field_offers: Vec<Offer> = Default::default();
+    let mut field_outcome: Option<String> = None;
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "observation" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_observation = decode_observation(r)?;
+                }
+                "offers" => {
+                    if seen & 2 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 2;
+                    field_offers = decode_list(r, decode_offer)?;
+                }
+                "outcome" => {
+                    if seen & 4 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 4;
+                    field_outcome = Some(r.string()?);
+                }
+                _ => {
+                    r.skip_value()?;
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 7 != 7 {
+        return r.refuse("missing_field");
+    }
+    let Some(field_outcome) = field_outcome.as_deref().and_then(OfferOutcome::from_wire) else {
+        return r.refuse("bad_enum");
+    };
+    Ok(OfferSnapshot {
+        observation: field_observation,
+        offers: field_offers,
+        outcome: field_outcome,
+    })
+}
+
 fn decode_oa_router_models_arguments(r: &mut Reader) -> Result<OARouterModelsArguments, Refusal> {
     if r.at() != b'{' {
         return r.refuse("wrong_type");
@@ -2238,6 +2759,63 @@ fn decode_oa_router_pick_arguments(r: &mut Reader) -> Result<OARouterPickArgumen
         return r.refuse("missing_field");
     }
     Ok(OARouterPickArguments {
+        request: field_request,
+    })
+}
+
+fn decode_oa_router_offer_arguments(r: &mut Reader) -> Result<OARouterOfferArguments, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_request: Option<OfferRequest> = None;
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "request" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_request = Some(decode_offer_request(r)?);
+                }
+                _ => {
+                    return r.refuse("unknown_field");
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 1 != 1 {
+        return r.refuse("missing_field");
+    }
+    let Some(field_request) = field_request else {
+        return r.refuse("missing_field");
+    };
+    Ok(OARouterOfferArguments {
         request: field_request,
     })
 }
@@ -2638,6 +3216,63 @@ fn decode_oa_router_pick_result(r: &mut Reader) -> Result<OARouterPickResult, Re
     })
 }
 
+fn decode_oa_router_offer_result(r: &mut Reader) -> Result<OARouterOfferResult, Refusal> {
+    if r.at() != b'{' {
+        return r.refuse("wrong_type");
+    }
+    r.enter()?;
+    r.pos += 1;
+    let mut field_value: Option<OfferSnapshot> = None;
+    let mut seen: u32 = 0;
+    r.skip_ws();
+    if r.at() != b'}' {
+        loop {
+            r.skip_ws();
+            if r.at() != b'"' {
+                return r.refuse("malformed");
+            }
+            let key = r.string()?;
+            r.skip_ws();
+            if r.at() != b':' {
+                return r.refuse("malformed");
+            }
+            r.pos += 1;
+            r.skip_ws();
+            match key.as_str() {
+                "value" => {
+                    if seen & 1 != 0 {
+                        return r.refuse("duplicate_field");
+                    }
+                    seen |= 1;
+                    field_value = Some(decode_offer_snapshot(r)?);
+                }
+                _ => {
+                    return r.refuse("unknown_field");
+                }
+            }
+            r.skip_ws();
+            if r.at() != b',' {
+                break;
+            }
+            r.pos += 1;
+        }
+    }
+    if r.at() != b'}' {
+        return r.refuse("malformed");
+    }
+    r.pos += 1;
+    r.depth -= 1;
+    if seen & 1 != 1 {
+        return r.refuse("missing_field");
+    }
+    let Some(field_value) = field_value else {
+        return r.refuse("missing_field");
+    };
+    Ok(OARouterOfferResult {
+        value: field_value,
+    })
+}
+
 pub fn decode(data: &[u8]) -> Result<PickRequest, Refusal> {
     let mut r = Reader { buf: data, pos: 0, depth: 0 };
     r.skip_ws();
@@ -2660,6 +3295,10 @@ fn service_check_pick_request(v: &PickRequest) -> Result<(), Refusal> {
     Ok(())
 }
 
+fn service_check_offer_request(_v: &OfferRequest) -> Result<(), Refusal> {
+    Ok(())
+}
+
 fn service_check_oa_router_models_arguments(_v: &OARouterModelsArguments) -> Result<(), Refusal> {
     Ok(())
 }
@@ -2670,6 +3309,11 @@ fn service_check_oa_router_hosts_arguments(_v: &OARouterHostsArguments) -> Resul
 
 fn service_check_oa_router_pick_arguments(v: &OARouterPickArguments) -> Result<(), Refusal> {
     service_check_pick_request(&v.request)?;
+    Ok(())
+}
+
+fn service_check_oa_router_offer_arguments(v: &OARouterOfferArguments) -> Result<(), Refusal> {
+    service_check_offer_request(&v.request)?;
     Ok(())
 }
 
@@ -2728,6 +3372,10 @@ pub trait Router {
     /// permits all hosts; an explicit empty allowance permits none. Attribution
     /// comes from the bound caller.
     fn pick(&self, request: PickRequest) -> Result<PickResult, Self::Error>;
+    /// List the families a caller may ask for a profile, one name each and the
+    /// conservative context, after the request's placement and answer reserve.
+    /// Gated by abstraction.router/inventory.read.
+    fn offer(&self, request: OfferRequest) -> Result<OfferSnapshot, Self::Error>;
 }
 
 pub struct RouterClient<T> {
@@ -2815,6 +3463,30 @@ impl<T: FrameTransport> Router for RouterClient<T> {
             return Err(CallError::Service(ServiceError { code: error.code, message: error.message }));
         }
         let result = service_decode(&reply.payload, decode_oa_router_pick_result).map_err(CallError::Refusal)?;
+        Ok(result.value)
+    }
+
+    fn offer(&self, request: OfferRequest) -> Result<OfferSnapshot, Self::Error> {
+        let args = OARouterOfferArguments { request };
+        let arguments = service_encode(&args, service_check_oa_router_offer_arguments, enc_oa_router_offer_arguments, decode_oa_router_offer_arguments).map_err(CallError::Refusal)?;
+        let request = OAServiceFrame { version: 1, service: "abstraction.router/router@1".into(), method: "Offer".into(), arguments };
+        let frame = service_encode(&request, service_check_oa_service_frame, enc_oa_service_frame, decode_oa_service_frame).map_err(CallError::Refusal)?;
+        let reply = self.transport.exchange_frame(&frame).map_err(CallError::Transport)?;
+        let reply = service_decode(&reply, decode_oa_service_reply).map_err(CallError::Refusal)?;
+        if reply.version != 1 {
+            return Err(CallError::Dispatch("unknown_version"));
+        }
+        if reply.service != "abstraction.router/router@1" || reply.method != "Offer" {
+            return Err(CallError::Dispatch("mismatched_response"));
+        }
+        if !reply.ok {
+            let error = service_decode(&reply.payload, decode_oa_service_error).map_err(CallError::Refusal)?;
+            if error.code.is_empty() {
+                return Err(CallError::Dispatch("invalid_error"));
+            }
+            return Err(CallError::Service(ServiceError { code: error.code, message: error.message }));
+        }
+        let result = service_decode(&reply.payload, decode_oa_router_offer_result).map_err(CallError::Refusal)?;
         Ok(result.value)
     }
 }

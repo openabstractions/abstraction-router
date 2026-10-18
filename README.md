@@ -1,18 +1,35 @@
 # abstraction-router
 
-See which models this computer can serve, where they are already loaded and
+*For applications that ask which model server should answer, and operators
+who authorise servers. Inference performs the call itself.*
+
+The router picks which model server on this machine or an authorised host
+answers a model name. See which models this computer can serve, where they are already loaded and
 which allowed server best fits one request. The router reports the choice
 and its cost or loading consequence. The inference service performs the
 model call and keeps provider addresses and credentials away from the
 application.
 
+**What's new here:** One answer to which server should answer a model name,
+read from what the model servers OA knows already have loaded, so a model one
+application loaded can serve the next.
+
     what models exist here, under every name they are known by
     which server currently holds which, and what that costs
     given a request, which server should serve it
+    for a profile, which families an application can be offered
 
 Applications resolve `abstraction.router/router@1` through the facade.
-`Models`, `Hosts` and `Pick` return bounded typed results. Inventory and
-route selection have separate rights: `Models` and `Hosts` decide
+`Models`, `Hosts`, `Pick` and `Offer` return bounded typed results.
+`Offer` returns an `outcome`: `offered` carries the model offers; `invalid`,
+`unavailable`, `forbidden` and `not_permitted` carry no offers. Check that
+outcome before using the inventory (CONTRACT.md ROUTE-E3).
+`Offer` lists, for a profile, a placement and the answer reserve the
+caller keeps, each family it can ask for with one name and the
+conservative context window: the smallest bound
+across the family's servers, and `unknown` when a server that fixes its
+window at load reported none. Inventory and
+route selection have separate rights: `Models`, `Hosts` and `Offer` decide
 `abstraction.router/inventory.read`, and `Pick` decides
 `abstraction.router/route.pick`; both apply to resource `account`
 (`abstraction.router/inventory` and `abstraction.router/routes` today —
@@ -23,10 +40,7 @@ router does not load, unload or evict a model.
 
 The installed runtime serves this contract as `router-v1`, the framed
 Thrift protocol in the next section, and `facade.ResolveRouter` reaches it
-there. The legacy JSON-over-socket protocol — `routerd` and the `router`
-CLI — is retired: the installed runtime does not run it, and its binaries
-remain buildable only for manual, offline inspection
-([HISTORY.md](HISTORY.md) carries its full account).
+there.
 
 Measured on the machine it was written for: consolidating three models
 into one server saved 0.30 GB of 42.87 and turned one failed load from a
@@ -36,7 +50,7 @@ is a router.
 
 ## The router-v1 protocol
 
-The Go and C++ clients expose `Models`, `Hosts` and `Pick` through
+The Go and C++ clients expose `Models`, `Hosts`, `Pick` and `Offer` through
 generated [Thrift bindings](router.thrift) and the shared IPC runtime;
 this is the protocol the installed runtime serves for
 `abstraction.router/router@1`. They contain no model-server discovery
@@ -157,7 +171,11 @@ r.UseCredentials(apply) // the runtime's in-process applier
 A remote runtime is a hosted server whose own `router@1` `Models` and
 `Hosts` are read over the mutual-TLS remote transport; its own servers
 are listed under `<remote-name>/<server>`, each carrying
-`domain: <remote-name>`. The remote applies its own credential to the
+`domain: <remote-name>`. Its aliases carry the context lengths its own
+`Models` reports, and `Offer` asks the remote's own `Offer` and folds each
+answer into the local family by the smaller context; a remote older than
+`Offer` is folded from its listed aliases, and a remote whose `Offer` fails
+otherwise counts nothing. The remote applies its own credential to the
 requests it performs on this runtime's behalf; this router never carries
 or applies it.
 
@@ -208,7 +226,9 @@ name one model four ways with no overlap — Lemonade's `id` and its
 `checkpoint`, LM Studio's `id`, Ollama's `name:tag`, ComfyUI's bare
 filenames — and every one of them is reported under the family it
 belongs to. A `family` is what two names for the same weights must agree
-on before one of them can answer for the other.
+on before one of them can answer for the other. Two servers serving the
+same name are two aliases of that family, one per server, each with its
+own residency and context lengths.
 
 The family is the storage inventory's. A store that can name what a file
 is publishes an `abstraction.model/descriptor@1` manifest, and the router
@@ -308,3 +328,27 @@ Caller `user_description` and `path_description` contain server-observed
 diagnostic text, including proof decorations. They are not stable
 principal identifiers, filesystem paths, or authorization evidence. The
 audit entries likewise contain diagnostic caller descriptions.
+
+## Status
+
+The legacy JSON-over-socket protocol — `routerd` and the `router`
+CLI — is retired: the installed runtime does not run it, and its binaries
+remain buildable only for manual, offline inspection
+([HISTORY.md](HISTORY.md) carries its full account).
+
+`Offer`'s conservative context window is [CONTRACT.md](CONTRACT.md) ROUTE-D8.
+
+<!-- BEGIN GENERATED PERMISSION DEFINITIONS -->
+
+## Permission definitions
+
+Generated from the existing compiled catalogue. [RIGHTS.json](RIGHTS.json) contains the complete action/profile records, disclosure, lifecycle, first-use behavior, selector support and finite bundles.
+
+This reference records compiled receiving support; RIGHTS.json names the compilation context. A connected runtime advertises current availability and selector support. These definitions supply no grant.
+
+| Action | Resource profile | Owning operations | First-use targets | Compiled receiver |
+|---|---|---|---|---|
+| `abstraction.router/inventory.read` | `abstraction.rights/legacy-exact-string@1` | `abstraction.router/router@1#Models`, `abstraction.router/router@1#Hosts`, `abstraction.router/router@1#Offer` | Legacy `exact` | served in compiled context |
+| `abstraction.router/route` | `abstraction.rights/legacy-exact-string@1` | `abstraction.router/router@1#Pick` | `none` | served in compiled context |
+
+<!-- END GENERATED PERMISSION DEFINITIONS -->

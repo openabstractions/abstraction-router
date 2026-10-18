@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 )
 
 // Profiles a host serves, the seed of abstraction.inference host_profiles. A
@@ -21,6 +21,10 @@ const (
 	ProfileSpeech        = "speech"
 	ProfileImage         = "image"
 	ProfileLive          = "live"
+	// ProfileVideo is a native provider's abstraction.inference/video@1,
+	// which the runtime's job executor reaches for video jobs (inference
+	// CONTRACT.md INF-G5). No host serves it by default.
+	ProfileVideo = "video"
 )
 
 // SeedProfiles is every seeded profile, in catalogue order.
@@ -116,83 +120,51 @@ func ollamaContextLength(modelInfo map[string]any) int64 {
 	return 0
 }
 
-// ollamaShow reads each model's capabilities and context length once, from
-// one /api/show call that loads nothing (it reads stored metadata, not model
-// weights), and keeps them while the model stays listed.
-type ollamaShow struct {
-	mu      sync.Mutex
-	known   map[string][]string
-	context map[string]int64
-}
-
-// ensure populates known and context for every name not already cached,
-// then drops any cached name no longer in names. Locked by the caller.
-func (s *ollamaShow) ensure(h *Host, names []string) {
-	if s.known == nil {
-		s.known = map[string][]string{}
-	}
-	if s.context == nil {
-		s.context = map[string]int64{}
-	}
+// ollamaModelMetadata reads each model's capabilities and context length once
+// per survey from /api/show. The result is intentionally survey-scoped so
+// changes to same-named models are visible on the next fresh inventory read.
+func ollamaModelMetadata(ctx context.Context, h *Host, names []string) map[string]hostModelMetadata {
+	out := make(map[string]hostModelMetadata, len(names))
+	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		if _, ok := s.known[name]; ok {
+		if _, ok := seen[name]; ok {
 			continue
+		}
+		seen[name] = struct{}{}
+		if err := ctx.Err(); err != nil {
+			return out
 		}
 		var d struct {
 			Capabilities []string       `json:"capabilities"`
 			ModelInfo    map[string]any `json:"model_info"`
 		}
-		if err := post(h.Base+"/api/show", map[string]string{"model": name}, &d); err != nil || d.Capabilities == nil {
+		if err := postContext(ctx, h.Base+"/api/show", map[string]string{"model": name}, &d); err != nil || d.Capabilities == nil {
 			continue
 		}
-		s.known[name] = ollamaProfiles(d.Capabilities)
+		metadata := hostModelMetadata{profiles: ollamaProfiles(d.Capabilities)}
 		if n := ollamaContextLength(d.ModelInfo); n > 0 {
-			s.context[name] = n
+			metadata.context.maximum = n
 		}
-	}
-	for name := range s.known {
-		if !has(names, name) {
-			delete(s.known, name)
-			delete(s.context, name)
-		}
-	}
-}
-
-func (s *ollamaShow) profiles(h *Host, names []string) map[string][]string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensure(h, names)
-	out := map[string][]string{}
-	for _, name := range names {
-		if p, ok := s.known[name]; ok {
-			out[name] = p
-		}
-	}
-	return out
-}
-
-// contextLength is modelContextLength for the Ollama host: it shares
-// ensure's cache with profiles, so a survey that already read profiles for
-// these names sends no further /api/show call.
-func (s *ollamaShow) contextLength(h *Host, names []string) map[string]int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ensure(h, names)
-	out := map[string]int64{}
-	for _, name := range names {
-		if n, ok := s.context[name]; ok {
-			out[name] = n
-		}
+		out[name] = metadata
 	}
 	return out
 }
 
 func post(url string, body, into any) error {
+	return postContext(context.Background(), url, body, into)
+}
+
+func postContext(ctx context.Context, url string, body, into any) error {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	resp, err := client.Post(url, "application/json", bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

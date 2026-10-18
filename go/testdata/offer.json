@@ -1,0 +1,232 @@
+{
+  "about": "ROUTE-D8 offer cases. router_offer_test.go feeds each case's families to a Router whose servers are the aliases' hosts, in the order servers names and then in order of first appearance; windowAtLoad and hosted are server facts carried on each alias; a server named under remotes is a remote runtime answering Offer with its offers, or unknown_method. Each request lists the offers the router must answer. The first eight cases carry the names of adopters/opencode/test/fixtures/inventory-context.json, which held the rule before the router owned it.",
+  "cases": [
+    {
+      "name": "one servable chat alias per family, the first in byte order",
+      "families": [
+        {"family": "alpha", "names": [
+          {"name": "b-alias", "host": "ollama", "servable": true, "profiles": []},
+          {"name": "a-alias", "host": "ollama", "servable": true, "profiles": ["chat"]}
+        ]},
+        {"family": "beta", "names": [{"name": "not-servable", "host": "ollama", "servable": false, "profiles": ["chat"]}]},
+        {"family": "gamma", "names": [{"name": "embed-only", "host": "ollama", "servable": true, "profiles": ["embed"]}]},
+        {"family": "delta", "names": [{"name": "delta-alias", "host": "ollama", "servable": true, "profiles": ["chat", "embed"]}]},
+        {"family": "cased", "names": [
+          {"name": "b-model", "host": "ollama", "servable": true, "profiles": ["chat"]},
+          {"name": "B-model", "host": "ollama", "servable": true, "profiles": ["chat"]}
+        ]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "alpha", "names": ["a-alias", "b-alias"], "servers": ["ollama"], "context": 32768, "contextSource": "default", "input": 28672},
+          {"family": "cased", "names": ["B-model", "b-model"], "servers": ["ollama"], "context": 32768, "contextSource": "default", "input": 28672},
+          {"family": "delta", "names": ["delta-alias"], "servers": ["ollama"], "context": 32768, "contextSource": "default", "input": 28672}
+        ]},
+        {"profile": "embed", "placement": "local", "reserve": 0, "offers": [
+          {"family": "alpha", "names": ["b-alias"], "servers": ["ollama"], "context": 8192, "contextSource": "default", "input": 8192},
+          {"family": "delta", "names": ["delta-alias"], "servers": ["ollama"], "context": 8192, "contextSource": "default", "input": 8192},
+          {"family": "gamma", "names": ["embed-only"], "servers": ["ollama"], "context": 8192, "contextSource": "default", "input": 8192}
+        ]}
+      ]
+    },
+    {
+      "name": "reported, effective and conservative family context",
+      "families": [
+        {"family": "reported", "names": [{"name": "reported", "host": "ollama", "servable": true, "contextLength": 131072}]},
+        {"family": "effective", "names": [{"name": "effective", "host": "ollama", "servable": true, "contextLength": 32768, "effectiveContextLength": 8192}]},
+        {"family": "above-maximum", "names": [{"name": "above-maximum", "host": "ollama", "servable": true, "contextLength": 8192, "effectiveContextLength": 16384}]},
+        {"family": "mixed", "names": [
+          {"name": "a-unknown", "host": "ollama", "servable": true, "contextLength": 32768},
+          {"name": "b-loaded", "host": "ollama", "servable": true, "contextLength": 32768, "effectiveContextLength": 12288}
+        ]},
+        {"family": "small", "names": [{"name": "small", "host": "ollama", "servable": true, "contextLength": 8192, "effectiveContextLength": 4096}]}
+      ],
+      "requests": [
+        {"profile": "chat", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "above-maximum", "names": ["above-maximum"], "servers": ["ollama"], "context": 8192, "contextSource": "maximum", "input": 4096},
+          {"family": "effective", "names": ["effective"], "servers": ["ollama"], "context": 8192, "contextSource": "effective", "input": 4096},
+          {"family": "mixed", "names": ["a-unknown", "b-loaded"], "servers": ["ollama"], "context": 12288, "contextSource": "effective", "input": 8192},
+          {"family": "reported", "names": ["reported"], "servers": ["ollama"], "context": 131072, "contextSource": "maximum", "input": 126976},
+          {"family": "small", "names": ["small"], "servers": ["ollama"], "context": 4096, "contextSource": "effective", "input": 0}
+        ]},
+        {"profile": "chat", "placement": "local", "reserve": 0, "offers": [
+          {"family": "above-maximum", "names": ["above-maximum"], "servers": ["ollama"], "context": 8192, "contextSource": "maximum", "input": 8192},
+          {"family": "effective", "names": ["effective"], "servers": ["ollama"], "context": 8192, "contextSource": "effective", "input": 8192},
+          {"family": "mixed", "names": ["a-unknown", "b-loaded"], "servers": ["ollama"], "context": 12288, "contextSource": "effective", "input": 12288},
+          {"family": "reported", "names": ["reported"], "servers": ["ollama"], "context": 131072, "contextSource": "maximum", "input": 131072},
+          {"family": "small", "names": ["small"], "servers": ["ollama"], "context": 4096, "contextSource": "effective", "input": 4096}
+        ]}
+      ]
+    },
+    {
+      "name": "unknown Lemonade effective context withholds its whole family",
+      "families": [
+        {"family": "only-lemonade", "names": [{"name": "lemonade-qwen", "host": "lemonade", "windowAtLoad": true, "servable": true, "contextLength": 40960}]},
+        {"family": "mixed", "names": [
+          {"name": "lemonade-unknown", "host": "lemonade", "windowAtLoad": true, "servable": true, "contextLength": 40960},
+          {"name": "ollama-known", "host": "ollama", "servable": true, "contextLength": 32768, "effectiveContextLength": 8192}
+        ]},
+        {"family": "loaded-lemonade", "names": [{"name": "lemonade-loaded", "host": "lemonade", "windowAtLoad": true, "servable": true, "contextLength": 40960, "effectiveContextLength": 16384}]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "loaded-lemonade", "names": ["lemonade-loaded"], "servers": ["lemonade"], "context": 16384, "contextSource": "effective", "input": 12288},
+          {"family": "mixed", "names": ["lemonade-unknown", "ollama-known"], "servers": ["lemonade", "ollama"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["lemonade/lemonade-unknown"]},
+          {"family": "only-lemonade", "names": ["lemonade-qwen"], "servers": ["lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["lemonade/lemonade-qwen"]}
+        ]}
+      ]
+    },
+    {
+      "name": "local scope leaves hosted aliases out of the family",
+      "servers": ["ollama", "openai"],
+      "families": [
+        {"family": "cloud", "names": [{"name": "cloud", "host": "openai", "servable": true, "hosted": true, "contextLength": 128000}]},
+        {"family": "split", "names": [
+          {"name": "a-hosted", "host": "openai", "servable": true, "hosted": true, "contextLength": 8192},
+          {"name": "b-local", "host": "ollama", "servable": true, "contextLength": 65536}
+        ]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "split", "names": ["b-local"], "servers": ["ollama"], "context": 65536, "contextSource": "maximum", "input": 61440}
+        ]},
+        {"profile": "", "placement": "hosted", "reserve": 4096, "offers": [
+          {"family": "cloud", "names": ["cloud"], "servers": ["openai"], "context": 128000, "contextSource": "maximum", "input": 123904},
+          {"family": "split", "names": ["a-hosted"], "servers": ["openai"], "context": 8192, "contextSource": "maximum", "input": 4096}
+        ]}
+      ]
+    },
+    {
+      "name": "remote scope keeps hosted aliases",
+      "servers": ["ollama", "openai"],
+      "families": [
+        {"family": "cloud", "names": [{"name": "cloud", "host": "openai", "servable": true, "hosted": true, "contextLength": 128000}]},
+        {"family": "split", "names": [
+          {"name": "a-hosted", "host": "openai", "servable": true, "hosted": true, "contextLength": 8192},
+          {"name": "b-local", "host": "ollama", "servable": true, "contextLength": 65536}
+        ]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "any", "reserve": 4096, "offers": [
+          {"family": "cloud", "names": ["cloud"], "servers": ["openai"], "context": 128000, "contextSource": "maximum", "input": 123904},
+          {"family": "split", "names": ["a-hosted", "b-local"], "servers": ["ollama", "openai"], "context": 8192, "contextSource": "maximum", "input": 4096}
+        ]}
+      ]
+    },
+    {
+      "name": "one name on two servers is one model at the family minimum",
+      "families": [
+        {"family": "both-reported", "names": [
+          {"name": "qwen3-8b", "host": "a", "servable": true, "profiles": ["chat"], "contextLength": 131072, "effectiveContextLength": 65536},
+          {"name": "qwen3-8b", "host": "b", "servable": true, "profiles": ["chat"], "contextLength": 40960, "effectiveContextLength": 8192}
+        ]},
+        {"family": "second-unreported", "names": [
+          {"name": "qwen3-8b", "host": "a", "servable": true, "profiles": ["chat"], "contextLength": 131072, "effectiveContextLength": 65536},
+          {"name": "qwen3-8b", "host": "b", "servable": true, "profiles": ["chat"]}
+        ]},
+        {"family": "second-lemonade", "names": [
+          {"name": "qwen3-8b", "host": "a", "servable": true, "profiles": ["chat"], "contextLength": 131072, "effectiveContextLength": 65536},
+          {"name": "qwen3-8b", "host": "lemonade", "windowAtLoad": true, "servable": true, "profiles": ["chat"], "contextLength": 40960}
+        ]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "both-reported", "names": ["qwen3-8b"], "servers": ["a", "b"], "context": 8192, "contextSource": "effective", "input": 4096},
+          {"family": "second-lemonade", "names": ["qwen3-8b"], "servers": ["a", "lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["lemonade/qwen3-8b"]},
+          {"family": "second-unreported", "names": ["qwen3-8b"], "servers": ["a", "b"], "context": 32768, "contextSource": "default", "input": 28672}
+        ]}
+      ]
+    },
+    {
+      "name": "a Lemonade effective context above its maximum is unknown, and an empty family is skipped",
+      "families": [
+        {"family": "lemonade-above-maximum", "names": [{"name": "lemonade-odd", "host": "lemonade", "windowAtLoad": true, "servable": true, "contextLength": 8192, "effectiveContextLength": 16384}]},
+        {"family": "empty", "names": []}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "lemonade-above-maximum", "names": ["lemonade-odd"], "servers": ["lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["lemonade/lemonade-odd"]}
+        ]}
+      ]
+    },
+    {
+      "name": "aliases sort in UTF-8 byte order, which is code-point order",
+      "families": [
+        {"family": "wide", "names": [
+          {"name": "😀-model", "host": "ollama", "servable": true, "profiles": ["chat"]},
+          {"name": "Ａ-model", "host": "ollama", "servable": true, "profiles": ["chat"]}
+        ]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "wide", "names": ["Ａ-model", "😀-model"], "servers": ["ollama"], "context": 32768, "contextSource": "default", "input": 28672}
+        ]}
+      ]
+    },
+    {
+      "name": "a profile without a context window answers none",
+      "families": [
+        {"family": "voice", "names": [{"name": "voice", "host": "ollama", "servable": true, "profiles": ["speech"], "contextLength": 4096}]},
+        {"family": "talker", "names": [{"name": "talker", "host": "lemonade", "windowAtLoad": true, "servable": true, "profiles": ["speech"]}]}
+      ],
+      "requests": [
+        {"profile": "speech", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "talker", "names": ["talker"], "servers": ["lemonade"], "context": 0, "contextSource": "none", "input": 0},
+          {"family": "voice", "names": ["voice"], "servers": ["ollama"], "context": 0, "contextSource": "none", "input": 0}
+        ]},
+        {"profile": "chat", "placement": "local", "reserve": 4096, "offers": []}
+      ]
+    },
+    {
+      "name": "two remote runtimes fold into the local family by their minimum",
+      "servers": ["ollama", "east", "west"],
+      "remotes": {
+        "east": {"offers": [
+          {"family": "qwen", "names": ["qwen-east"], "servers": ["lemonade"], "context": 16384, "contextSource": "effective", "input": 12288}
+        ]},
+        "west": {"offers": [
+          {"family": "qwen", "names": ["qwen"], "servers": ["ollama", "lmstudio"], "context": 65536, "contextSource": "maximum", "input": 61440},
+          {"family": "only-west", "names": ["west-model"], "servers": ["lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["lemonade/west-model"]}
+        ]}
+      },
+      "families": [
+        {"family": "qwen", "names": [
+          {"name": "qwen", "host": "ollama", "servable": true, "contextLength": 40960, "effectiveContextLength": 32768},
+          {"name": "qwen-east", "host": "east", "hosted": true, "servable": true, "contextLength": 1000}
+        ]},
+        {"family": "only-west", "names": [{"name": "west-model", "host": "west", "hosted": true, "servable": true}]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "any", "reserve": 4096, "offers": [
+          {"family": "only-west", "names": ["west-model"], "servers": ["west/lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["west/lemonade/west-model"]},
+          {"family": "qwen", "names": ["qwen", "qwen-east"], "servers": ["ollama", "east/lemonade", "west/ollama", "west/lmstudio"], "context": 16384, "contextSource": "effective", "input": 12288}
+        ]},
+        {"profile": "", "placement": "hosted", "reserve": 4096, "offers": [
+          {"family": "only-west", "names": ["west-model"], "servers": ["west/lemonade"], "context": 0, "contextSource": "unknown", "input": 0, "unknown": ["west/lemonade/west-model"]},
+          {"family": "qwen", "names": ["qwen", "qwen-east"], "servers": ["east/lemonade", "west/ollama", "west/lmstudio"], "context": 16384, "contextSource": "effective", "input": 12288}
+        ]},
+        {"profile": "", "placement": "local", "reserve": 4096, "offers": [
+          {"family": "qwen", "names": ["qwen"], "servers": ["ollama"], "context": 32768, "contextSource": "effective", "input": 28672}
+        ]}
+      ]
+    },
+    {
+      "name": "a remote answering unknown_method is folded from its Models aliases",
+      "servers": ["ollama", "old"],
+      "remotes": {"old": {"unknownMethod": true}},
+      "families": [
+        {"family": "qwen", "names": [
+          {"name": "qwen", "host": "ollama", "servable": true, "contextLength": 40960, "effectiveContextLength": 32768},
+          {"name": "qwen", "host": "old", "hosted": true, "servable": true, "contextLength": 40960, "effectiveContextLength": 20480}
+        ]},
+        {"family": "plain", "names": [{"name": "plain", "host": "old", "hosted": true, "servable": true}]}
+      ],
+      "requests": [
+        {"profile": "", "placement": "any", "reserve": 4096, "offers": [
+          {"family": "plain", "names": ["plain"], "servers": ["old"], "context": 32768, "contextSource": "default", "input": 28672},
+          {"family": "qwen", "names": ["qwen"], "servers": ["ollama", "old"], "context": 20480, "contextSource": "effective", "input": 16384}
+        ]}
+      ]
+    }
+  ]
+}

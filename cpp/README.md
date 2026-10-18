@@ -1,5 +1,7 @@
 # Router from C++
 
+*For C++ applications.*
+
 Read model families, inspect host residency, and choose a permitted model host.
 The client uses generated typed RPC over the shared IPC runtime; the Go provider
 owns discovery and routing. There is no C++ server, embedded provider or silent

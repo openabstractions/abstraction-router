@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -84,7 +85,7 @@ func TestLive(t *testing.T) {
 
 	for _, h := range Installed() {
 		start := time.Now()
-		installed, err := h.installed(h)
+		installed, err := h.installed(context.Background(), h)
 		t.Logf("READ    %-9s %4d names in %6.1f ms  %v", h.Name, len(installed), ms(time.Since(start)), err)
 	}
 	for _, op := range []Request{{Op: OpModels}, {Op: OpResidency}, {Op: OpRoute, Model: want},
