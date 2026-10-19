@@ -70,16 +70,24 @@ type Host struct {
 	// the family takes the request.
 	Unavailable func() string
 	// windowAtLoad is true for a server that fixes its request window when a
-	// model loads (Lemonade's ctx_size). Its model maximum is no substitute
-	// for that window: an alias without a valid effective length makes its
-	// family's offered context unknown (ROUTE-D8).
+	// model loads (Lemonade's ctx_size, Ollama's num_ctx). Its model maximum
+	// is no substitute for that window: an alias without a valid effective
+	// length makes its family's offered context unknown (ROUTE-D8).
 	windowAtLoad bool
-	remote       *remoteLink
-	native       *nativeLink
-	surveyReady  func() bool
-	installed    func(context.Context, *Host) ([]string, error)
-	resident     func(context.Context, *Host) ([]string, error)
-	listing      func(ctx context.Context, h *Host, headers map[string]string) ([]string, error)
+	// loadedWindow is true for a server that reports the window a loaded
+	// model serves with (LoadedWindow): every windowAtLoad server, and LM
+	// Studio, whose cold models stay bounded by their maximum.
+	loadedWindow bool
+	// load loads a model the way the server's next request for it would,
+	// so that its loaded window can be read (LoadedWindow). Nil when the
+	// server loads only on a request.
+	load        func(ctx context.Context, h *Host, name string) error
+	remote      *remoteLink
+	native      *nativeLink
+	surveyReady func() bool
+	installed   func(context.Context, *Host) ([]string, error)
+	resident    func(context.Context, *Host) ([]string, error)
+	listing     func(ctx context.Context, h *Host, headers map[string]string) ([]string, error)
 	// modelProfiles reads the profiles of installed models from the host's own
 	// metadata; nil when the host reports none.
 	modelProfiles func(ctx context.Context, h *Host, names []string) map[string][]string
@@ -495,12 +503,14 @@ func positiveJSONInteger(raw json.RawMessage) int64 {
 }
 
 // lmStudioModel is one entry of LM Studio's GET /api/v0/models listing
-// (lmstudio.ai/docs/developer/rest/endpoints).
+// (lmstudio.ai/docs/developer/rest/endpoints). A loaded model also reports
+// the context length it was loaded with.
 type lmStudioModel struct {
-	ID               string `json:"id"`
-	Type             string `json:"type"`
-	State            string `json:"state"`
-	MaxContextLength int64  `json:"max_context_length"`
+	ID                  string `json:"id"`
+	Type                string `json:"type"`
+	State               string `json:"state"`
+	MaxContextLength    int64  `json:"max_context_length"`
+	LoadedContextLength int64  `json:"loaded_context_length"`
 }
 
 func LMStudio(base string) *Host {
@@ -511,7 +521,7 @@ func LMStudio(base string) *Host {
 		err := fetchContext(ctx, h.Base+"/api/v0/models", &d)
 		return d.Data, err
 	}
-	return &Host{Name: "lmstudio", Base: base, Chat: "/v1/chat/completions",
+	return &Host{Name: "lmstudio", Base: base, Chat: "/v1/chat/completions", loadedWindow: true,
 		installed: func(ctx context.Context, h *Host) ([]string, error) {
 			d, err := list(ctx, h)
 			if err != nil {
@@ -545,8 +555,15 @@ func LMStudio(base string) *Host {
 			}
 			out := map[string]modelContext{}
 			for _, m := range d {
-				if m.MaxContextLength > 0 && has(names, m.ID) {
-					out[m.ID] = modelContext{maximum: m.MaxContextLength}
+				if !has(names, m.ID) {
+					continue
+				}
+				value := modelContext{maximum: max(m.MaxContextLength, 0)}
+				if m.State == "loaded" {
+					value.effective = validEffective(m.LoadedContextLength, value.maximum)
+				}
+				if value.maximum > 0 || value.effective > 0 {
+					out[m.ID] = value
 				}
 			}
 			return out
@@ -582,10 +599,18 @@ func Ollama(base string) *Host {
 		}
 		return out, nil
 	}
-	return &Host{Name: "ollama", Base: base, Chat: "/v1/chat/completions",
+	return &Host{Name: "ollama", Base: base, Chat: "/v1/chat/completions", windowAtLoad: true,
 		installed:     func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/tags") },
 		resident:      func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/ps") },
-		modelMetadata: ollamaModelMetadata}
+		modelMetadata: ollamaModelMetadata,
+		// A generate request without a prompt loads the model with the
+		// options a chat completions request gets, and answers once loaded.
+		load: func(ctx context.Context, h *Host, name string) error {
+			var done struct {
+				Done bool `json:"done"`
+			}
+			return postContext(ctx, h.Base+"/api/generate", map[string]string{"model": name}, &done)
+		}}
 }
 
 // WhisperCPP is one explicitly configured whisper.cpp server. Its process

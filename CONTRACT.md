@@ -135,8 +135,18 @@ it.
 
 **[ROUTE-D3] Two files of one [family](https://openabstractions.github.io/reference.html#concept-model.family-identity) on one server are one family and
 several files.** Differing only in `quant` or `format`, they MUST be
-reported as one family and several files; a file the server already holds
-wins, and otherwise the server's own order decides.
+reported as one family and several files. When the caller names an exact
+alias a server lists (a quant or a file), the router MUST serve that alias,
+loading it if needed, or refuse with the reason. A resident sibling of the
+same family MUST NOT answer it silently; the refusal names the sibling it
+kept out. When the caller names only the family, a file the server already
+holds wins, and otherwise the server's own order decides; the decision's
+`model` and `why` name the served alias (A-F20). The router reads a name
+stating a quant as that quant, which every alias stating the same quant
+serves, and a name ending in a model-file extension as that file alone. A
+name equal to one server's full listed alias is also exact; for llama.cpp
+that is the file-derived name. A bare family name (`qwen3.6-35b-a3b`,
+`qwen/qwen3.6-35b-a3b`) stays a family request.
 
 **[ROUTE-D4] `PickRequest.allowed` bounds which servers may answer.**
 Absent, it MUST allow every servable server. Present with `servers: []`, it
@@ -183,7 +193,13 @@ window answers `context_source: none`, `context: 0` and `input: 0`.
 Families are listed in UTF-8 byte order of `family`. The fold reads the
 latest survey (`fresh` surveys first) and sends nothing to a server on this
 machine; the servers that fix their window at load are a router host-table
-fact, Lemonade today. `research/opencode-inventory/DECISION.md` records the
+fact: Lemonade and Ollama. Ollama's effective length is the running model's
+`/api/ps` `context_length`, else the Modelfile `num_ctx` in `/api/show`
+`parameters`. LM Studio reports a loaded model's `loaded_context_length` in
+`/api/v0/models` as its effective length. `LoadedWindow` reads one alias's
+window from its server at request time for these three servers and, on
+Ollama, loads a model whose window is unknown with a prompt-less
+`/api/generate`, as the request would load it (inference INF-Q7). `research/opencode-inventory/DECISION.md` records the
 decision; `go/testdata/offer.json` holds the cases.
 
 **[ROUTE-D9] A model serves only the profiles named for it.** Each alias
@@ -551,10 +567,8 @@ maps to private source `4b7f684db7ab7adc36ffb36d3257814c83c63f34`, where
   `Offer`, added after the published method set, carries semantic refusals
   through `ROUTE-E3`'s typed result. The published `Models`, `Hosts` and
   `Pick` shapes retain their original refusal channel until `router@2`.
-- ROUTE-D8 treats Lemonade alone as a server that fixes its request window
-  at load. Ollama and LM Studio also load a model with a window; until the
-  router reads that loaded window (Ollama's `/api/ps` `context_length`, LM
-  Studio's loaded context), their aliases are bounded by their maximum.
+- LM Studio also loads a model with a window, and the router reads it only
+  once the model is loaded: a cold LM Studio alias is bounded by its maximum.
 - On ROUTE-S4's `unknown_method` fallback a remote's aliases reach this
   router under the remote's own name, and a remote Lemonade alias loses its
   window-at-load marking: without an effective length it is bounded by its

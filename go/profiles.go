@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
@@ -122,10 +123,55 @@ func ollamaContextLength(modelInfo map[string]any) int64 {
 	return 0
 }
 
+// ollamaLoadedWindows reads the window each running model was loaded with
+// from /api/ps context_length. A model Ollama does not list, or an Ollama
+// that reports no length, is absent.
+func ollamaLoadedWindows(ctx context.Context, h *Host) map[string]int64 {
+	var d struct {
+		Models []struct {
+			Name          string          `json:"name"`
+			Model         string          `json:"model"`
+			ContextLength json.RawMessage `json:"context_length"`
+		} `json:"models"`
+	}
+	if fetchContext(ctx, h.Base+"/api/ps", &d) != nil {
+		return nil
+	}
+	out := map[string]int64{}
+	for _, m := range d.Models {
+		if n := positiveJSONInteger(m.ContextLength); n > 0 {
+			for _, name := range []string{m.Name, m.Model} {
+				if name != "" {
+					out[name] = n
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ollamaParameterWindow reads num_ctx from /api/show parameters, the window a
+// Modelfile sets for every load of the model; 0 when it sets none.
+func ollamaParameterWindow(parameters string) int64 {
+	for _, line := range strings.Split(parameters, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "num_ctx" {
+			if n, err := strconv.ParseInt(fields[1], 10, 64); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
 // ollamaModelMetadata reads each model's capabilities and context length once
-// per survey from /api/show. The result is intentionally survey-scoped so
-// changes to same-named models are visible on the next fresh inventory read.
+// per survey from /api/show, and the window it runs with: the loaded window
+// from /api/ps when the model is running, else its Modelfile num_ctx. A model
+// with neither has an unknown window, since Ollama fixes it at load (ROUTE-D8).
+// The result is intentionally survey-scoped so changes to same-named models
+// are visible on the next fresh inventory read.
 func ollamaModelMetadata(ctx context.Context, h *Host, names []string) map[string]hostModelMetadata {
+	loaded := ollamaLoadedWindows(ctx, h)
 	out := make(map[string]hostModelMetadata, len(names))
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
@@ -139,6 +185,7 @@ func ollamaModelMetadata(ctx context.Context, h *Host, names []string) map[strin
 		var d struct {
 			Capabilities []string       `json:"capabilities"`
 			ModelInfo    map[string]any `json:"model_info"`
+			Parameters   string         `json:"parameters"`
 		}
 		if err := postContext(ctx, h.Base+"/api/show", map[string]string{"model": name}, &d); err != nil || d.Capabilities == nil {
 			continue
@@ -146,6 +193,10 @@ func ollamaModelMetadata(ctx context.Context, h *Host, names []string) map[strin
 		metadata := hostModelMetadata{profiles: ollamaProfiles(d.Capabilities)}
 		if n := ollamaContextLength(d.ModelInfo); n > 0 {
 			metadata.context.maximum = n
+		}
+		metadata.context.effective = validEffective(loaded[name], metadata.context.maximum)
+		if metadata.context.effective == 0 {
+			metadata.context.effective = validEffective(ollamaParameterWindow(d.Parameters), metadata.context.maximum)
 		}
 		out[name] = metadata
 	}

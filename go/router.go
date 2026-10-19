@@ -721,6 +721,7 @@ func (r *Router) routeSnapshot(ctx context.Context, req Request, s snapshot) (*D
 		d.Verdict, d.Why = EmptyFamily, "nothing in "+quote(req.Model)+" names a model"
 		return d, s.at
 	}
+	exact := exactAlias(req.Model, s.lists(req.Model))
 	var installedOn []string
 	for _, f := range s.families {
 		if f.Family != fam {
@@ -728,7 +729,7 @@ func (r *Router) routeSnapshot(ctx context.Context, req Request, s snapshot) (*D
 		}
 		for _, a := range f.Names {
 			// A name no host serves has no host to install it on.
-			if a.Host != "" && s.installed(a.Host, a.Name) && !has(installedOn, a.Host) {
+			if a.Host != "" && exact.serves(a.Name) && s.installed(a.Host, a.Name) && !has(installedOn, a.Host) {
 				installedOn = append(installedOn, a.Host)
 			}
 		}
@@ -743,7 +744,7 @@ func (r *Router) routeSnapshot(ctx context.Context, req Request, s snapshot) (*D
 		return d, s.at
 	}
 
-	for _, c := range r.rankHosted(ctx, d, r.candidates(s, fam, profile)) {
+	for _, c := range r.rankHosted(ctx, d, r.candidates(s, fam, profile, exact)) {
 		if !d.permits(c.host.Name) {
 			d.Withheld = append(d.Withheld, c.host.Name)
 			continue
@@ -759,28 +760,125 @@ func (r *Router) routeSnapshot(ctx context.Context, req Request, s snapshot) (*D
 			d.Verdict, d.Loads = WouldLoad, 1
 			d.Why = "no host holds it; " + c.host.Name + " has it installed. The router does not load it"
 		}
+		if exact == nil && !strings.EqualFold(c.name, req.Model) {
+			d.Why += "; the request named the family, and " + quote(c.name) + " serves it"
+		}
+		return d, s.at
+	}
+	refuse := func(verdict, why string) (*Decision, time.Time) {
+		d.Verdict, d.Why = verdict, why
+		if exact != nil {
+			d.Why += exact.unsubstituted(r.candidates(s, fam, profile, nil))
+		}
 		return d, s.at
 	}
 	if len(d.Withheld) > 0 {
-		d.Verdict = Unauthorised
-		d.Why = fmt.Sprintf("%v can serve it and the request authorised %v; the router does not go outside what it was given",
-			d.Withheld, *d.Authorised)
-		return d, s.at
+		return refuse(Unauthorised, fmt.Sprintf("%v can serve it and the request authorised %v; the router does not go outside what it was given",
+			d.Withheld, *d.Authorised))
 	}
 	for _, h := range r.Hosts() {
 		if h.Servable() && has(installedOn, h.Name) {
-			d.Verdict = NoHost
-			d.Why = fmt.Sprintf("%v has it, and no host serves it for the %s profile", installedOn, profile)
-			return d, s.at
+			if reason := h.UnavailableReason(); reason != "" {
+				return refuse(NoHost, fmt.Sprintf("%v has it, and %s cannot serve now (%s)", installedOn, h.Name, reason))
+			}
+			return refuse(NoHost, fmt.Sprintf("%v has it, and no host serves it for the %s profile", installedOn, profile))
 		}
 	}
 	if len(installedOn) > 0 {
-		d.Verdict = Unservable
-		d.Why = fmt.Sprintf("only %v has it, and what that runs is a graph, not a model an OpenAI-compatible endpoint can serve", installedOn)
-		return d, s.at
+		return refuse(Unservable, fmt.Sprintf("only %v has it, and what that runs is a graph, not a model an OpenAI-compatible endpoint can serve", installedOn))
 	}
-	d.Verdict, d.Why = NotOnDisk, "no host on this machine has it installed"
-	return d, s.at
+	return refuse(NotOnDisk, "no host on this machine has it installed")
+}
+
+// exactName is how a request names one file of its family (ROUTE-D3): by a
+// quant, which every alias stating that quant serves; or by a model file, or
+// a server's full listed alias, which only that name serves. A nil exactName
+// is a request naming the family, which any alias of the family serves.
+type exactName struct {
+	asked, quant string
+}
+
+// exactAlias reads a request; listed says a server lists the asked name.
+func exactAlias(asked string, listed bool) *exactName {
+	if quant := identity.Parse(asked).Quant; quant != "" {
+		return &exactName{asked: asked, quant: quant}
+	}
+	if namesFile(asked) || (listed && !bareFamily(asked)) {
+		return &exactName{asked: asked}
+	}
+	return nil
+}
+
+// lists reports whether a server lists name as one of its aliases.
+func (s snapshot) lists(name string) bool {
+	for _, f := range s.families {
+		for _, a := range f.Names {
+			if strings.EqualFold(a.Name, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bareFamily reports whether a name says its family and nothing more: after
+// its publisher, it reads as the family once separators are made one. A
+// llama.cpp file-derived name such as "Qwen3.6-35B-A3B-MTP-GGUF" carries a
+// build and packaging beyond "qwen3.6-35b-a3b"; "qwen/qwen3.6-35b-a3b" and
+// "qwen3:8b" carry none.
+func bareFamily(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if i := strings.LastIndexByte(n, '/'); i >= 0 {
+		n = n[i+1:]
+	}
+	n = strings.Map(func(r rune) rune {
+		switch r {
+		case ':', '_', ' ', '+':
+			return '-'
+		}
+		return r
+	}, n)
+	return n == identity.Family(name)
+}
+
+// serves reports whether an alias is the file the request named.
+func (e *exactName) serves(name string) bool {
+	switch {
+	case e == nil:
+		return true
+	case e.quant != "":
+		return identity.Parse(name).Quant == e.quant
+	default:
+		return strings.EqualFold(name, e.asked)
+	}
+}
+
+// unsubstituted names the family's servable sibling an exact request refused,
+// so the caller reads why a model it can see did not answer.
+func (e *exactName) unsubstituted(siblings []candidate) string {
+	if len(siblings) == 0 {
+		return ""
+	}
+	c := siblings[0]
+	state := "has"
+	if c.held {
+		state = "holds"
+	}
+	return fmt.Sprintf("; %s %s %s of the same family, and an exact name is never answered by another file", c.host.Name, state, quote(c.name))
+}
+
+// modelFileExtensions are the file suffixes abstraction-model's identity reads
+// as packaging. A request ending in one names that file.
+var modelFileExtensions = []string{".gguf", ".safetensors", ".sft", ".bin", ".pt", ".pt2", ".pth", ".ckpt", ".onnx", ".npz", ".pkl"}
+
+func namesFile(asked string) bool {
+	lower := strings.ToLower(strings.TrimSpace(asked))
+	for _, ext := range modelFileExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Decision) permits(host string) bool {
@@ -799,14 +897,17 @@ type candidate struct {
 // the request orders them, because a second copy of a model already in memory
 // is the waste this exists to stop; a hosted host comes last, because it spends.
 // Only names the host serves for profile count.
-func (r *Router) candidates(s snapshot, fam, profile string) []candidate {
+//
+// An exact request (exactName) keeps only the aliases that are the file it
+// named: a resident sibling of another quant or file never answers it.
+func (r *Router) candidates(s snapshot, fam, profile string, exact *exactName) []candidate {
 	var out []candidate
 	// A host that cannot serve now takes no route (Host.Unavailable).
 	hosts := slices.DeleteFunc(r.Hosts(), func(h *Host) bool { return h.UnavailableReason() != "" })
 	serving := func(h *Host, names []string) []string {
 		var kept []string
 		for _, name := range names {
-			if s.serves(h, name, profile) {
+			if exact.serves(name) && s.serves(h, name, profile) {
 				kept = append(kept, name)
 			}
 		}
@@ -824,7 +925,7 @@ func (r *Router) candidates(s snapshot, fam, profile string) []candidate {
 		if !h.Servable() || h.Hosted || len(serving(h, residentOf(s, fam, h.Name))) > 0 {
 			continue
 		}
-		if name, ok := s.pickServing(fam, h, profile); ok {
+		if name, ok := s.pickServing(fam, h, profile, exact); ok {
 			out = append(out, candidate{host: h, name: name})
 		}
 	}
@@ -832,7 +933,7 @@ func (r *Router) candidates(s snapshot, fam, profile string) []candidate {
 		if !h.Servable() || !h.Hosted {
 			continue
 		}
-		if name, ok := s.pickServing(fam, h, profile); ok {
+		if name, ok := s.pickServing(fam, h, profile, exact); ok {
 			out = append(out, candidate{host: h, name: name})
 		}
 	}
@@ -841,8 +942,8 @@ func (r *Router) candidates(s snapshot, fam, profile string) []candidate {
 
 // pickServing is the host's own choice of name for the family when it serves
 // profile, or else the first of its names for the family that does.
-func (s snapshot) pickServing(fam string, h *Host, profile string) (string, bool) {
-	if name, ok := s.pick[fam][h.Name]; ok && s.serves(h, name, profile) && s.installed(h.Name, name) {
+func (s snapshot) pickServing(fam string, h *Host, profile string, exact *exactName) (string, bool) {
+	if name, ok := s.pick[fam][h.Name]; ok && exact.serves(name) && s.serves(h, name, profile) && s.installed(h.Name, name) {
 		return name, true
 	}
 	for _, f := range s.families {
@@ -850,7 +951,7 @@ func (s snapshot) pickServing(fam string, h *Host, profile string) (string, bool
 			continue
 		}
 		for _, a := range f.Names {
-			if a.Host == h.Name && s.serves(h, a.Name, profile) && s.installed(h.Name, a.Name) {
+			if a.Host == h.Name && exact.serves(a.Name) && s.serves(h, a.Name, profile) && s.installed(h.Name, a.Name) {
 				return a.Name, true
 			}
 		}

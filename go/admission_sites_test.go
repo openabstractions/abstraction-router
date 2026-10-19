@@ -4,9 +4,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,22 +17,13 @@ import (
 // post-admission seam. Check each calling function, rather than a package-wide
 // occurrence of a gate that could belong to another entry point.
 func TestRouterPostAdmissionCallSites(t *testing.T) {
-	rootBytes, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		t.Fatal(err)
+	files := routerSourceFiles(t)
+	if !slices.ContainsFunc(files, func(f routerSourceFile) bool { return f.name == routerModulePrefix+"service.go" }) {
+		t.Fatal("the source inventory misses the module's own service.go")
 	}
-	root := strings.TrimSpace(string(rootBytes))
-	command := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "*.go")
-	command.Dir = root
-	files, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range strings.Split(strings.TrimSpace(string(files)), "\n") {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(root, name))
+	for _, source := range files {
+		name := source.name
+		body, err := os.ReadFile(source.path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,6 +80,61 @@ func TestRouterPostAdmissionCallSites(t *testing.T) {
 			}
 		}
 	}
+}
+
+// routerModulePrefix is this module's folder in the repository.
+const routerModulePrefix = "openabstractions-flat/abstraction-router/go/"
+
+// routerSourceFile is one Go file: its slash-separated name in the
+// repository and its path on this computer.
+type routerSourceFile struct{ name, path string }
+
+// routerSourceFiles lists every non-test Go file of the checkout this
+// package's tests run in, read from the file system. The test runs in the module folder;
+// in the repository the root is three folders up, and in a checkout of the
+// module alone the module folder is the root and its files carry the
+// module's repository prefix. Folders git ignores or that hold other
+// checkouts and build output are skipped: those whose name starts with a
+// dot (.git, .forks, .split, .build, .gotest), node_modules, bin, build and
+// target. A worktree reached from another operating system, as a Windows
+// worktree under WSL, has a .git file git there cannot follow, so the
+// inventory never asks git.
+func routerSourceFiles(t *testing.T) []routerSourceFile {
+	t.Helper()
+	module, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, prefix := filepath.Clean(filepath.Join(module, "..", "..", "..")), ""
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(routerModulePrefix), "service.go")); err != nil {
+		root, prefix = module, routerModulePrefix
+	}
+	var files []routerSourceFile
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			if path != root && (strings.HasPrefix(name, ".") || slices.Contains([]string{"node_modules", "bin", "build", "target"}, name)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, routerSourceFile{name: prefix + filepath.ToSlash(rel), path: path})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
 
 func mustParse(t *testing.T, name string, body []byte, mode parser.Mode) *ast.File {

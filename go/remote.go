@@ -57,7 +57,19 @@ type remoteLink struct {
 // context the remote reports for them, and an offer asks the remote's own
 // router@1 Offer (ROUTE-S4).
 func NewRemote(name, address string, config *tls.Config, credential string, admit func(remote.Peer) error) (*Host, error) {
-	transport, err := remote.Client(address, config, 30*time.Second, remoteFrameBytes, admit)
+	return NewRemoteWithDialer(name, address, credential, remote.Dialer{TLS: config, Admit: admit})
+}
+
+// NewRemoteWithDialer retains the remote transport owner's per-call admission.
+// Zero limits take this router's existing frame and operation bounds.
+func NewRemoteWithDialer(name, address, credential string, dialer remote.Dialer) (*Host, error) {
+	if dialer.Timeout == 0 {
+		dialer.Timeout = 30 * time.Second
+	}
+	if dialer.MaxFrame == 0 {
+		dialer.MaxFrame = remoteFrameBytes
+	}
+	transport, err := dialer.Client(address)
 	if err != nil {
 		return nil, err
 	}
