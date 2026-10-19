@@ -82,6 +82,22 @@ type completion struct {
 type caller struct {
 	ask  func(Request) (Response, error)
 	http *http.Client
+	// address is where the test sends a decided server's chat request; a
+	// decision names the server and never its address.
+	address func(host string) string
+}
+
+// chatAddresses maps each of r's servers to the chat address the service
+// itself would send to.
+func chatAddresses(r *Router) func(string) string {
+	return func(host string) string {
+		for _, h := range r.Hosts() {
+			if h.Name == host && !h.Hosted {
+				return h.ChatURL()
+			}
+		}
+		return ""
+	}
 }
 
 func (cl *caller) serve(req Request, authorised []string) (Decision, completion, error) {
@@ -93,7 +109,7 @@ func (cl *caller) serve(req Request, authorised []string) (Decision, completion,
 			return Decision{}, completion{}, err
 		}
 		d := *out.Decision
-		if d.Endpoint == "" {
+		if d.Host == "" || cl.address(d.Host) == "" {
 			return d, completion{}, nil
 		}
 		r, err := cl.chat(d)
@@ -113,7 +129,7 @@ func (cl *caller) chat(d Decision) (completion, error) {
 	if err != nil {
 		return completion{}, err
 	}
-	req, err := http.NewRequest("POST", d.Endpoint, bytes.NewReader(body))
+	req, err := http.NewRequest("POST", cl.address(d.Host), bytes.NewReader(body))
 	if err != nil {
 		return completion{}, err
 	}
@@ -202,16 +218,17 @@ func TestOneRequestRoutedThroughThreeOutcomes(t *testing.T) {
 	t.Logf("STATE: a laptop, %d logical CPUs, %s", runtime.NumCPU(), powerState())
 	tr := watchEveryRequest(t)
 
-	r := New(Installed()...)
-	s, err := Start(DefaultEndpoint()+"-route58", r)
+	r := New(liveHosts(t)...)
+	endpoint := routerFixtureEndpoint(t, "route58")
+	s, err := Start(endpoint, r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	r.Survey()
 
-	c := &Client{Endpoint: DefaultEndpoint() + "-route58"}
-	cl := &caller{ask: c.Ask, http: &http.Client{Transport: tr, Timeout: 5 * time.Minute}}
+	c := &Client{Endpoint: endpoint}
+	cl := &caller{ask: c.Ask, http: &http.Client{Transport: tr, Timeout: 5 * time.Minute}, address: chatAddresses(r)}
 
 	res, err := c.Ask(Request{Op: OpResidency})
 	if err != nil {
@@ -251,7 +268,7 @@ func TestOneRequestRoutedThroughThreeOutcomes(t *testing.T) {
 	if d.Verdict != Unauthorised {
 		t.Fatalf("a host the request did not authorise was not refused: %+v", d)
 	}
-	if d.Host != "" || d.Endpoint != "" || got.Host != "" {
+	if d.Host != "" || got.Host != "" {
 		t.Fatalf("a refusal named somewhere to send: %+v", d)
 	}
 	if !has(d.Withheld, holder) {
@@ -269,7 +286,7 @@ func TestOneRequestRoutedThroughThreeOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("FALLBACK authorised %v -> %s on %s (%s), loads %d", allow, d.Verdict, d.Host, d.Endpoint, d.Loads)
+	t.Logf("FALLBACK authorised %v -> %s on %s, loads %d", allow, d.Verdict, d.Host, d.Loads)
 	t.Logf("        %s answered as %q: %.60q", got.Host, got.Model, got.Text)
 	t.Logf("        sent: %v", tr.since(before))
 	if d.Host == allow[0] {
@@ -284,7 +301,7 @@ func TestOneRequestRoutedThroughThreeOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("RESIDENT authorised %v -> %s on %s (%s), loads %d", allow, d.Verdict, d.Host, d.Endpoint, d.Loads)
+	t.Logf("RESIDENT authorised %v -> %s on %s, loads %d", allow, d.Verdict, d.Host, d.Loads)
 	t.Logf("        %s answered as %q: %.60q", got.Host, got.Model, got.Text)
 	if d.Verdict != Resident || d.Loads != 0 {
 		t.Fatalf("the host that just served it was not reported as holding it: %+v", d)
@@ -335,7 +352,7 @@ func TestTheCallerMovesOnWhenTheNamedHostWillNotServe(t *testing.T) {
 
 	r := New(LMStudio(holds.URL), Ollama(serves.URL))
 	r.Survey()
-	cl := &caller{http: holds.Client(), ask: func(req Request) (Response, error) {
+	cl := &caller{http: holds.Client(), address: chatAddresses(r), ask: func(req Request) (Response, error) {
 		out := r.Answer(req, listen.Seen{Bound: true, Path: "route58.test", User: "test"})
 		if out.Error != "" {
 			return out, errors.New(out.Error)
@@ -358,7 +375,7 @@ func TestTheCallerMovesOnWhenTheNamedHostWillNotServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Verdict != Unauthorised || d.Endpoint != "" || got.Host != "" {
+	if d.Verdict != Unauthorised || got.Host != "" {
 		t.Fatalf("a request authorising only a host that refused it was served anyway: %+v %+v", d, got)
 	}
 	if refusals != 2 {

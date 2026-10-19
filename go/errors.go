@@ -6,6 +6,9 @@ const (
 	CodeInvalidRequest   = "invalid_request"
 	CodeCallerRefused    = "caller_refused"
 	CodeUnknownOperation = "unknown_operation"
+	// CodeUnavailable answers a fresh request whose call deadline ended
+	// before the survey did; the previous snapshot stays readable.
+	CodeUnavailable = "unavailable"
 )
 
 // RemoteError is a service refusal. Code is empty for a legacy text-only reply.

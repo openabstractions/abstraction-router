@@ -39,46 +39,14 @@ function strs(out, v, depth) {
 
 const isWs = (c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d;
 
+// raw writes an opaque value's bytes as they are ([DEF-A3]).
 function raw(out, s, depth) {
   const b = typeof s === "string" ? ENC.encode(s) : s;
-  let i = 0;
-  while (i < b.length) {
-    const c = b[i];
-    if (isWs(c)) { i++; continue; }
-    if (c === 0x22) {
-      let j = i + 1;
-      while (j < b.length) {
-        if (b[j] === 0x5c) { j += 2; continue; }
-        if (b[j] === 0x22) { j++; break; }
-        j++;
-      }
-      for (let k = i; k < j; k++) out.byte(b[k]);
-      i = j;
-    } else if (c === 0x7b || c === 0x5b) {
-      out.byte(c);
-      i++;
-      let j = i;
-      while (j < b.length && isWs(b[j])) j++;
-      if (j < b.length && (b[j] === 0x7d || b[j] === 0x5d)) { out.byte(b[j]); i = j + 1; }
-      else { depth++; out.byte(0x0a); pad(out, depth); }
-    } else if (c === 0x7d || c === 0x5d) {
-      depth--;
-      out.byte(0x0a);
-      pad(out, depth);
-      out.byte(c);
-      i++;
-    } else if (c === 0x2c) {
-      out.ascii(",\n");
-      pad(out, depth);
-      i++;
-    } else if (c === 0x3a) {
-      out.ascii(": ");
-      i++;
-    } else {
-      out.byte(c);
-      i++;
-    }
-  }
+  // Whitespace around the value is not part of it.
+  let i = 0, j = b.length;
+  while (i < j && isWs(b[i])) i++;
+  while (j > i && isWs(b[j - 1])) j--;
+  for (let k = i; k < j; k++) out.byte(b[k]);
 }
 
 // A JavaScript string sorts by UTF-16 code unit, which puts U+1D11E before
@@ -126,6 +94,21 @@ function writeList(out, v, depth, enc) {
   out.byte(0x5d);
 }
 
+export const ReasoningEffort = Object.freeze({
+  None: "none",
+  Low: "low",
+  Medium: "medium",
+  High: "high",
+});
+
+export const EngineCause = Object.freeze({
+  Bound: "bound",
+  SourceOnly: "source_only",
+  Incompatible: "incompatible",
+  Unknown: "unknown",
+  Other: "other",
+});
+
 export const AvailabilityCause = Object.freeze({
   TransportUnavailable: "transport_unavailable",
   Credential: "credential",
@@ -158,6 +141,15 @@ export const OfferOutcome = Object.freeze({
   NotPermitted: "not_permitted",
 });
 
+export const ModalityOutcome = Object.freeze({
+  Page: "page",
+  Gap: "gap",
+  Invalid: "invalid",
+  Forbidden: "forbidden",
+  Unavailable: "unavailable",
+  NotPermitted: "not_permitted",
+});
+
 export const ServiceErrorCode = Object.freeze({
   HandlerError: "handler_error",
   InvalidResult: "invalid_result",
@@ -173,7 +165,7 @@ export const ServiceErrorCode = Object.freeze({
   Forbidden: "forbidden",
 });
 
-export const profiles = ["chat", "embed", "transcription", "speech", "image"];
+export const profiles = ["chat", "embed", "transcription", "speech", "image", "live", "video"];
 
 export const verdicts = ["resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"];
 
@@ -271,6 +263,112 @@ function writeObservation(out, v, depth) {
   out.byte(0x7d);
 }
 
+function writeReasoningSupport(out, v, depth) {
+  { const n = v.efforts.length; if (n > 8) throw new Refusal("bad_value",0); }
+    for (const item of v.efforts) {
+        if (typeof item !== "string") throw new Refusal("wrong_type",0);
+    }
+    if (v.defaultEffort !== null) {
+    if (typeof v.defaultEffort !== "string") throw new Refusal("wrong_type",0);
+    }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "efforts");
+  out.ascii(": ");
+  strs(out, v.efforts, depth + 1);
+  if (v.budget) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "budget");
+    out.ascii(": ");
+    out.ascii(v.budget ? "true" : "false");
+  }
+  if (v.defaultEffort !== undefined && v.defaultEffort !== null) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "default_effort");
+    out.ascii(": ");
+    esc(out, v.defaultEffort);
+  }
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeModelCapabilities(out, v, depth) {
+  if (v.tools !== undefined && (typeof v.tools !== "boolean")) throw new Refusal("wrong_type", 0);
+  if (v.structuredOutput !== undefined && (typeof v.structuredOutput !== "boolean")) throw new Refusal("wrong_type", 0);
+  { const n = v.input.length; if (n > 16) throw new Refusal("bad_value",0); }
+  if (Array.isArray(v.input)) { for (const oaElement of v.input) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw new Refusal("bad_value",0); }
+  } } }
+  { const n = v.output.length; if (n > 16) throw new Refusal("bad_value",0); }
+  if (Array.isArray(v.output)) { for (const oaElement of v.output) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw new Refusal("bad_value",0); }
+  } } }
+  { const n = v.extensions.length; if (n > 64) throw new Refusal("bad_value",0); }
+  out.byte(0x7b);
+  let first = true;
+  if (v.input.length !== 0) {
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "input");
+    out.ascii(": ");
+    strs(out, v.input, depth + 1);
+  }
+  if (v.output.length !== 0) {
+    if (!first) out.byte(0x2c);
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "output");
+    out.ascii(": ");
+    strs(out, v.output, depth + 1);
+  }
+  if (v.tools !== undefined) {
+    if (!first) out.byte(0x2c);
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "tools");
+    out.ascii(": ");
+    out.ascii(v.tools ? "true" : "false");
+  }
+  if (v.structuredOutput !== undefined) {
+    if (!first) out.byte(0x2c);
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "structured_output");
+    out.ascii(": ");
+    out.ascii(v.structuredOutput ? "true" : "false");
+  }
+  if (v.reasoning !== undefined && v.reasoning !== null) {
+    if (!first) out.byte(0x2c);
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "reasoning");
+    out.ascii(": ");
+    writeReasoningSupport(out, v.reasoning, depth + 1);
+  }
+  if (v.extensions.length !== 0) {
+    if (!first) out.byte(0x2c);
+    first = false;
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "extensions");
+    out.ascii(": ");
+    strs(out, v.extensions, depth + 1);
+  }
+  if (!first) { out.byte(0x0a); pad(out, depth); }
+  out.byte(0x7d);
+}
+
 function writeAlias(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
@@ -336,6 +434,14 @@ function writeAlias(out, v, depth) {
     out.ascii(": ");
     num(out, v.effectiveContextLength);
   }
+  if (v.capabilities !== undefined && v.capabilities !== null) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "capabilities");
+    out.ascii(": ");
+    writeModelCapabilities(out, v.capabilities, depth + 1);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -367,7 +473,191 @@ function writeComponent(out, v, depth) {
   out.byte(0x7d);
 }
 
+function writeEngine(out, v, depth) {
+  { const n = ENC.encode(v.id).length; if (n > 64) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.name).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.version).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.source).length; if (n > 256) throw new Refusal("bad_value",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "id");
+  out.ascii(": ");
+  esc(out, v.id);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "name");
+  out.ascii(": ");
+  esc(out, v.name);
+  if (v.version !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "version");
+    out.ascii(": ");
+    esc(out, v.version);
+  }
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "source");
+  out.ascii(": ");
+  esc(out, v.source);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeModelEngine(out, v, depth) {
+  { const n = ENC.encode(v.host).length; if (n > 4096) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.model).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.engine).length; if (n > 64) throw new Refusal("bad_value",0); }
+  { const n = v.profiles.length; if (n > 64) throw new Refusal("bad_value",0); }
+  if (Array.isArray(v.profiles)) { for (const oaElement of v.profiles) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw new Refusal("bad_value",0); }
+  } } }
+  { const n = ENC.encode(v.source).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.role).length; if (n > 64) throw new Refusal("bad_value",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "host");
+  out.ascii(": ");
+  esc(out, v.host);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "model");
+  out.ascii(": ");
+  esc(out, v.model);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "engine");
+  out.ascii(": ");
+  esc(out, v.engine);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "profiles");
+  out.ascii(": ");
+  strs(out, v.profiles, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "source");
+  out.ascii(": ");
+  esc(out, v.source);
+  if (v.role !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "role");
+    out.ascii(": ");
+    esc(out, v.role);
+  }
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeModelObject(out, v, depth) {
+  { const n = ENC.encode(v.domain).length; if (n > 4096) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.store).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.name).length; if (n > 4096) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.object).length; if (n > 1024) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.digest).length; if (n > 135) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.format).length; if (n > 128) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.architecture).length; if (n > 256) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.role).length; if (n > 64) throw new Refusal("bad_value",0); }
+  { const n = v.engines.length; if (n > 64) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.why).length; if (n > 4096) throw new Refusal("bad_value",0); }
+    if (typeof v.cause !== "string") throw new Refusal("wrong_type",0);
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "domain");
+  out.ascii(": ");
+  esc(out, v.domain);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "store");
+  out.ascii(": ");
+  esc(out, v.store);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "name");
+  out.ascii(": ");
+  esc(out, v.name);
+  if (v.object !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "object");
+    out.ascii(": ");
+    esc(out, v.object);
+  }
+  if (v.digest !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "digest");
+    out.ascii(": ");
+    esc(out, v.digest);
+  }
+  if (v.format !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "format");
+    out.ascii(": ");
+    esc(out, v.format);
+  }
+  if (v.architecture !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "architecture");
+    out.ascii(": ");
+    esc(out, v.architecture);
+  }
+  if (v.role !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "role");
+    out.ascii(": ");
+    esc(out, v.role);
+  }
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "engines");
+  out.ascii(": ");
+  writeList(out, v.engines, depth + 1, writeModelEngine);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "cause");
+  out.ascii(": ");
+  esc(out, v.cause);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "why");
+  out.ascii(": ");
+  esc(out, v.why);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
 function writeFamily(out, v, depth) {
+  { const n = ENC.encode(v.title).length; if (n > 128) throw new Refusal("bad_value",0); }
+  { const n = v.objects.length; if (n > 65536) throw new Refusal("bad_value",0); }
   out.byte(0x7b);
   out.byte(0x0a);
   pad(out, depth + 1);
@@ -404,6 +694,22 @@ function writeFamily(out, v, depth) {
     out.ascii(": ");
     writeList(out, v.components, depth + 1, writeComponent);
   }
+  if (v.title !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "title");
+    out.ascii(": ");
+    esc(out, v.title);
+  }
+  if (v.objects.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "objects");
+    out.ascii(": ");
+    writeList(out, v.objects, depth + 1, writeModelObject);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -428,6 +734,7 @@ function writeModelsSnapshot(out, v, depth) {
 }
 
 function writeHostState(out, v, depth) {
+  { const n = v.engines.length; if (n > 64) throw new Refusal("bad_value",0); }
     if (v.availabilityCause !== null) {
     if (typeof v.availabilityCause !== "string") throw new Refusal("wrong_type",0);
     }
@@ -528,6 +835,14 @@ function writeHostState(out, v, depth) {
     esc(out, "availability_cause");
     out.ascii(": ");
     esc(out, v.availabilityCause);
+  }
+  if (v.engines.length !== 0) {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "engines");
+    out.ascii(": ");
+    writeList(out, v.engines, depth + 1, writeEngine);
   }
   out.byte(0x0a);
   pad(out, depth);
@@ -737,6 +1052,7 @@ function writeOfferRequest(out, v, depth) {
 }
 
 function writeOffer(out, v, depth) {
+  { const n = ENC.encode(v.title).length; if (n > 128) throw new Refusal("bad_value",0); }
     if (typeof v.contextSource !== "string") throw new Refusal("wrong_type",0);
   out.byte(0x7b);
   out.byte(0x0a);
@@ -782,6 +1098,14 @@ function writeOffer(out, v, depth) {
     out.ascii(": ");
     strs(out, v.unknown, depth + 1);
   }
+  if (v.title !== "") {
+    out.byte(0x2c);
+    out.byte(0x0a);
+    pad(out, depth + 1);
+    esc(out, "title");
+    out.ascii(": ");
+    esc(out, v.title);
+  }
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -808,6 +1132,96 @@ function writeOfferSnapshot(out, v, depth) {
   esc(out, "outcome");
   out.ascii(": ");
   esc(out, v.outcome);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOfferObservation(out, v, depth) {
+  { const n = v.offers.length; if (n > 4096) throw new Refusal("bad_value",0); }
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw new Refusal("bad_value",0); }
+    if (typeof v.outcome !== "string") throw new Refusal("wrong_type",0);
+    if (v.outcome !== "offered" && v.outcome !== "invalid" && v.outcome !== "unavailable" && v.outcome !== "forbidden" && v.outcome !== "not_permitted") { throw new Refusal("bad_enum",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "observation");
+  out.ascii(": ");
+  writeObservation(out, v.observation, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "offers");
+  out.ascii(": ");
+  writeList(out, v.offers, depth + 1, writeOffer);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "outcome");
+  out.ascii(": ");
+  esc(out, v.outcome);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "cursor");
+  out.ascii(": ");
+  esc(out, v.cursor);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeModalityPage(out, v, depth) {
+  { const n = v.modalities.length; if (n > 64) throw new Refusal("bad_value",0); }
+  if (Array.isArray(v.modalities)) { for (const oaElement of v.modalities) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw new Refusal("bad_value",0); }
+  } } }
+  { const n = ENC.encode(v.next).length; if (n > 256) throw new Refusal("bad_value",0); }
+    if (typeof v.outcome !== "string") throw new Refusal("wrong_type",0);
+    if (v.outcome !== "page" && v.outcome !== "gap" && v.outcome !== "invalid" && v.outcome !== "forbidden" && v.outcome !== "unavailable" && v.outcome !== "not_permitted") { throw new Refusal("bad_enum",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "outcome");
+  out.ascii(": ");
+  esc(out, v.outcome);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "modalities");
+  out.ascii(": ");
+  strs(out, v.modalities, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "next");
+  out.ascii(": ");
+  esc(out, v.next);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "complete");
+  out.ascii(": ");
+  out.ascii(v.complete ? "true" : "false");
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOARouterModalitiesArguments(out, v, depth) {
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw new Refusal("bad_value",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "cursor");
+  out.ascii(": ");
+  esc(out, v.cursor);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "limit");
+  out.ascii(": ");
+  num(out, v.limit);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -856,6 +1270,31 @@ function writeOARouterOfferArguments(out, v, depth) {
   esc(out, "request");
   out.ascii(": ");
   writeOfferRequest(out, v.request, depth + 1);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOARouterObserveOfferArguments(out, v, depth) {
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw new Refusal("bad_value",0); }
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "request");
+  out.ascii(": ");
+  writeOfferRequest(out, v.request, depth + 1);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "cursor");
+  out.ascii(": ");
+  esc(out, v.cursor);
+  out.byte(0x2c);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "wait_ms");
+  out.ascii(": ");
+  num(out, v.waitMs);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -945,6 +1384,18 @@ function writeOAServiceError(out, v, depth) {
   out.byte(0x7d);
 }
 
+function writeOARouterModalitiesResult(out, v, depth) {
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "value");
+  out.ascii(": ");
+  writeModalityPage(out, v.value, depth + 1);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
 function writeOARouterModelsResult(out, v, depth) {
   out.byte(0x7b);
   out.byte(0x0a);
@@ -988,6 +1439,18 @@ function writeOARouterOfferResult(out, v, depth) {
   esc(out, "value");
   out.ascii(": ");
   writeOfferSnapshot(out, v.value, depth + 1);
+  out.byte(0x0a);
+  pad(out, depth);
+  out.byte(0x7d);
+}
+
+function writeOARouterObserveOfferResult(out, v, depth) {
+  out.byte(0x7b);
+  out.byte(0x0a);
+  pad(out, depth + 1);
+  esc(out, "value");
+  out.ascii(": ");
+  writeOfferObservation(out, v.value, depth + 1);
   out.byte(0x0a);
   pad(out, depth);
   out.byte(0x7d);
@@ -1382,6 +1845,10 @@ export function newPickRequest() {
   return { model: "", fresh: false, allowed: null, profile: "" };
 }
 
+// [Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description).
+// Diagnostic user and path descriptions observed by the server. They are
+// display information, not stable identifiers, filesystem paths or
+// authorization proof, and are never accepted as request claims.
 export function newCaller() {
   return { userDescription: "", pathDescription: "" };
 }
@@ -1390,34 +1857,83 @@ export function newObservation() {
   return { caller: newCaller(), tookMs: 0n, cacheAgeMs: 0n };
 }
 
-// hosted is true for a name read from a hosted host's model listing; such a
-// name is never resident. profiles are what the host's own model metadata says
-// this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply. held_in names the
-// storage inventory stores holding an object this alias's own name or digest
-// matches, in store order; empty when no store's object matches this name. host
-// is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's maximum supported
-// context window in tokens, read from host metadata without loading it (LM
-// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-// max_context_window); zero when the host reports none.
-// effective_context_length is a positive per-request context limit the host
-// currently reports: the loaded value when the model is resident, otherwise its
-// configured value when the host reports one (Lemonade's context_length); zero
-// when unknown. A nonpositive or contradictory effective value is omitted.
-export function newAlias() {
-  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [], heldIn: [], contextLength: 0n, effectiveContextLength: 0n };
+// The reasoning controls a model takes. efforts are the chat@3 effort words it
+// answers to, approximated ones included; budget is true when it also takes a
+// reasoning token budget; default_effort is what it reasons at when the caller
+// names none.
+export function newReasoningSupport() {
+  return { efforts: [], budget: false, defaultEffort: null };
 }
 
-// One role-bearing object a store holds, folded into a family's detail rather
-// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
-// store is the holder, role is projector, vae, or another value a storage
-// inventory source's descriptor names, and name is the store's own name for the
-// object when it named one.
+// What one alias on its host takes and gives: input and output modalities
+// (text, image, audio, video), tool calls, structured output, its reasoning
+// controls and the chat@3 extension names it supports. Sources in order: the
+// catalogue entry for the model, then the engine's own facts (a loaded vision
+// projector, the chat template's tool section), then the hosted provider's
+// model listing. A fact no source states is absent, never guessed. Display
+// data; it grants nothing.
+export function newModelCapabilities() {
+  return { input: [], output: [], tools: undefined, structuredOutput: undefined, reasoning: null, extensions: [] };
+}
+
+// [Alias](https://openabstractions.github.io/reference.html#concept-router.alias):
+// capabilities are this alias's own on its host, never merged with the same
+// family on another host. hosted is true for a name read from a hosted host's
+// model listing; such a name is never resident. profiles are what the host's
+// own model metadata says this name serves; empty when the host reports none,
+// and then its HostState profiles apply. held_in names the storage inventory
+// stores holding an object this alias's own name or digest matches, in store
+// order; empty when no store's object matches this name. host is empty exactly
+// for a name no host serves, which a store holds and which is never resident or
+// servable. context_length is the model's maximum supported context window in
+// tokens, read from host metadata without loading it; zero when the host
+// reports none. effective_context_length is a positive per-request context
+// limit the host currently reports: the loaded value when the model is
+// resident, otherwise its configured value when the host reports one; zero when
+// unknown. A nonpositive or contradictory effective value is omitted.
+export function newAlias() {
+  return { host: "", name: "", resident: false, servable: false, hosted: false, profiles: [], heldIn: [], contextLength: 0n, effectiveContextLength: 0n, capabilities: null };
+}
+
+// One [role-bearing
+// object](https://openabstractions.github.io/reference.html#concept-model-identity.component)
+// a store holds, folded into a
+// [family](https://openabstractions.github.io/reference.html#concept-model.family-identity)'s
+// detail rather than listed as a family of its own
+// (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is
+// projector, vae, or another value a storage inventory source's descriptor
+// names, and name is the store's own name for the object when it named one.
 export function newComponent() {
   return { store: "", role: "", name: "" };
 }
 
+// The provider's selected program loading weights (vocabulary D12), identified
+// within its host and registration generation. Version is omitted when
+// unreported. Source is display provenance, never an executable path or
+// authority claim.
+export function newEngine() {
+  return { id: "", name: "", version: "", source: "" };
+}
+
+// An explicit configured content-object-to-engine association from the accepted
+// provider registration or recipe. It asserts neither general format acceptance
+// nor readiness, and is separate from the client/service binding and actual
+// inference-route record.
+export function newModelEngine() {
+  return { host: "", model: "", engine: "", profiles: [], source: "", role: "" };
+}
+
+// One storage content object projected with its source's model facts. Domain is
+// empty locally; object is an opaque source ID and digest requires inventory
+// evidence. A collection manifest is never one object. Missing identity or
+// descriptor facts remain unknown. Existing Component retains the logical
+// role/base-family relation. Why is plain display text, never parsed. Clients
+// never display digest as page text.
+export function newModelObject() {
+  return { domain: "", store: "", name: "", object: "", digest: "", format: "", architecture: "", role: "", engines: [], cause: "", why: "" };
+}
+
+// [Family](https://openabstractions.github.io/reference.html#concept-router.family-catalogue):
 // names lists one alias per server and name; a name two servers serve appears
 // twice, once per server. held_in names the storage inventory stores holding an
 // object of this family, in store order, whether or not a host serves it; empty
@@ -1431,9 +1947,11 @@ export function newComponent() {
 // it, an object that is this family's only content — held_in and
 // family_source cover the family it was folded into or the family it stands in
 // for either way; components exists to say the family answers for a part, not a
-// whole model, when that is what it is.
+// whole model, when that is what it is. title is the model catalogue's display
+// name for the family, empty when none is known; it is shown to people and
+// never asked for.
 export function newFamily() {
-  return { family: "", names: [], heldIn: [], familySource: "", components: [] };
+  return { family: "", names: [], heldIn: [], familySource: "", components: [], title: "", objects: [] };
 }
 
 export function newModelsSnapshot() {
@@ -1456,7 +1974,7 @@ export function newModelsSnapshot() {
 // and never a header value. A listing the applier refuses reads up false with
 // why credential:<outcome>:<name>. A host on this machine omits all three.
 export function newHostState() {
-  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false, hosted: false, wire: "", credential: "", declaredBy: "", profiles: [], domain: "", availabilityCause: null };
+  return { host: "", base: "", up: false, why: "", installed: 0n, resident: [], servable: false, hosted: false, wire: "", credential: "", declaredBy: "", profiles: [], domain: "", availabilityCause: null, engines: [] };
 }
 
 export function newAsk() {
@@ -1492,15 +2010,39 @@ export function newOfferRequest() {
 // when a counted server fixes its window at load and reported none, none for a
 // profile without a context window. input is context minus the request's
 // reserve, 0 when nothing remains or context is 0. unknown names the aliases
-// whose server reported no usable request limit, as <server>/<name>.
+// whose server reported no usable request limit, as <server>/<name>. title is
+// the family's display name as in Family.
 export function newOffer() {
-  return { family: "", names: [], servers: [], context: 0n, contextSource: "", input: 0n, unknown: [] };
+  return { family: "", names: [], servers: [], context: 0n, contextSource: "", input: 0n, unknown: [], title: "" };
 }
 
 // Exactly offered carries observation and offers. Every refusal carries an
 // empty observation and no offers; it makes no model availability claim.
 export function newOfferSnapshot() {
   return { observation: newObservation(), offers: [], outcome: "" };
+}
+
+// One long-poll Offer reading. Exactly offered carries observation, offers and
+// cursor, a digest of the offers; it answers once that digest differs from the
+// cursor given, or when wait_ms ends. Every refusal carries an empty
+// observation, no offers and an empty cursor; it makes no model availability
+// claim.
+export function newOfferObservation() {
+  return { observation: newObservation(), offers: [], outcome: "", cursor: "" };
+}
+
+// page carries at most 64 distinct modality IDs, each at most 256 UTF-8 bytes,
+// in UTF-8 byte order. next is an opaque cursor of at most 256 bytes, empty
+// exactly when complete. The catalogue contains the seed modalities and valid
+// current registered host declarations, independently of model availability.
+// Other outcomes carry no modalities, an empty next and complete false. gap
+// requires restarting with an empty cursor.
+export function newModalityPage() {
+  return { outcome: "", modalities: [], next: "", complete: false };
+}
+
+function newOARouterModalitiesArguments() {
+  return { cursor: "", limit: 0n };
 }
 
 function newOARouterModelsArguments() {
@@ -1519,6 +2061,10 @@ function newOARouterOfferArguments() {
   return { request: newOfferRequest() };
 }
 
+function newOARouterObserveOfferArguments() {
+  return { request: newOfferRequest(), cursor: "", waitMs: 0n };
+}
+
 function newOAServiceFrame() {
   return { version: 0, service: "", method: "", arguments: "" };
 }
@@ -1529,6 +2075,10 @@ function newOAServiceReply() {
 
 function newOAServiceError() {
   return { code: "", message: "" };
+}
+
+function newOARouterModalitiesResult() {
+  return { value: newModalityPage() };
 }
 
 function newOARouterModelsResult() {
@@ -1545,6 +2095,10 @@ function newOARouterPickResult() {
 
 function newOARouterOfferResult() {
   return { value: newOfferSnapshot() };
+}
+
+function newOARouterObserveOfferResult() {
+  return { value: newOfferObservation() };
 }
 
 function readHostAllowance(r) {
@@ -1636,6 +2190,7 @@ function readCaller(r) {
   const v = newCaller();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1654,6 +2209,8 @@ function readCaller(r) {
         seen |= 2;
         v.pathDescription = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1675,6 +2232,7 @@ function readObservation(r) {
   const v = newObservation();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1697,6 +2255,8 @@ function readObservation(r) {
         seen |= 4;
         v.cacheAgeMs = r.integer(-9223372036854775808n, 9223372036854775807n);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1711,6 +2271,122 @@ function readObservation(r) {
   return v;
 }
 
+function readReasoningSupport(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newReasoningSupport();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "efforts") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.efforts = r.strList();
+      } else if (key === "budget") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.budget = r.boolean();
+      } else if (key === "default_effort") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.defaultEffort = r.string();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1) >>> 0) !== 1) throw r.refuse("missing_field");
+  { const n = v.efforts.length; if (n > 8) throw r.refuse("bad_value"); }
+    for (const item of v.efforts) {
+        if (typeof item !== "string") throw new Refusal("wrong_type",0);
+    }
+  return v;
+}
+
+function readModelCapabilities(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newModelCapabilities();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "input") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.input = r.strList();
+      } else if (key === "output") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.output = r.strList();
+      } else if (key === "tools") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.tools = r.boolean();
+      } else if (key === "structured_output") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.structuredOutput = r.boolean();
+      } else if (key === "reasoning") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.reasoning = readReasoningSupport(r);
+      } else if (key === "extensions") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.extensions = r.strList();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  { const n = v.input.length; if (n > 16) throw r.refuse("bad_value"); }
+  if (Array.isArray(v.input)) { for (const oaElement of v.input) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw r.refuse("bad_value"); }
+  } } }
+  { const n = v.output.length; if (n > 16) throw r.refuse("bad_value"); }
+  if (Array.isArray(v.output)) { for (const oaElement of v.output) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw r.refuse("bad_value"); }
+  } } }
+  { const n = v.extensions.length; if (n > 64) throw r.refuse("bad_value"); }
+  return v;
+}
+
 function readAlias(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
@@ -1718,6 +2394,7 @@ function readAlias(r) {
   const v = newAlias();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1763,7 +2440,13 @@ function readAlias(r) {
         if (seen & 256) throw r.refuse("duplicate_field");
         seen |= 256;
         v.effectiveContextLength = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else if (key === "capabilities") {
+        if (seen & 512) throw r.refuse("duplicate_field");
+        seen |= 512;
+        v.capabilities = readModelCapabilities(r);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1785,6 +2468,7 @@ function readComponent(r) {
   const v = newComponent();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1807,6 +2491,8 @@ function readComponent(r) {
         seen |= 4;
         v.name = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1821,6 +2507,215 @@ function readComponent(r) {
   return v;
 }
 
+function readEngine(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newEngine();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "id") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.id = r.string();
+      } else if (key === "name") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.name = r.string();
+      } else if (key === "version") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.version = r.string();
+      } else if (key === "source") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.source = r.string();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 11) >>> 0) !== 11) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.id).length; if (n > 64) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.name).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.version).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.source).length; if (n > 256) throw r.refuse("bad_value"); }
+  return v;
+}
+
+function readModelEngine(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newModelEngine();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "host") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.host = r.string();
+      } else if (key === "model") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.model = r.string();
+      } else if (key === "engine") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.engine = r.string();
+      } else if (key === "profiles") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.profiles = r.strList();
+      } else if (key === "source") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.source = r.string();
+      } else if (key === "role") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.role = r.string();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 31) >>> 0) !== 31) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.host).length; if (n > 4096) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.model).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.engine).length; if (n > 64) throw r.refuse("bad_value"); }
+  { const n = v.profiles.length; if (n > 64) throw r.refuse("bad_value"); }
+  if (Array.isArray(v.profiles)) { for (const oaElement of v.profiles) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw r.refuse("bad_value"); }
+  } } }
+  { const n = ENC.encode(v.source).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.role).length; if (n > 64) throw r.refuse("bad_value"); }
+  return v;
+}
+
+function readModelObject(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newModelObject();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "domain") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.domain = r.string();
+      } else if (key === "store") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.store = r.string();
+      } else if (key === "name") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.name = r.string();
+      } else if (key === "object") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.object = r.string();
+      } else if (key === "digest") {
+        if (seen & 16) throw r.refuse("duplicate_field");
+        seen |= 16;
+        v.digest = r.string();
+      } else if (key === "format") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.format = r.string();
+      } else if (key === "architecture") {
+        if (seen & 64) throw r.refuse("duplicate_field");
+        seen |= 64;
+        v.architecture = r.string();
+      } else if (key === "role") {
+        if (seen & 128) throw r.refuse("duplicate_field");
+        seen |= 128;
+        v.role = r.string();
+      } else if (key === "engines") {
+        if (seen & 256) throw r.refuse("duplicate_field");
+        seen |= 256;
+        v.engines = readList(r, readModelEngine);
+      } else if (key === "cause") {
+        if (seen & 512) throw r.refuse("duplicate_field");
+        seen |= 512;
+        v.cause = r.string();
+      } else if (key === "why") {
+        if (seen & 1024) throw r.refuse("duplicate_field");
+        seen |= 1024;
+        v.why = r.string();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1799) >>> 0) !== 1799) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.domain).length; if (n > 4096) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.store).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.name).length; if (n > 4096) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.object).length; if (n > 1024) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.digest).length; if (n > 135) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.format).length; if (n > 128) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.architecture).length; if (n > 256) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.role).length; if (n > 64) throw r.refuse("bad_value"); }
+  { const n = v.engines.length; if (n > 64) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.why).length; if (n > 4096) throw r.refuse("bad_value"); }
+  return v;
+}
+
 function readFamily(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
@@ -1828,6 +2723,7 @@ function readFamily(r) {
   const v = newFamily();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1857,7 +2753,17 @@ function readFamily(r) {
         if (seen & 16) throw r.refuse("duplicate_field");
         seen |= 16;
         v.components = readList(r, readComponent);
+      } else if (key === "title") {
+        if (seen & 32) throw r.refuse("duplicate_field");
+        seen |= 32;
+        v.title = r.string();
+      } else if (key === "objects") {
+        if (seen & 64) throw r.refuse("duplicate_field");
+        seen |= 64;
+        v.objects = readList(r, readModelObject);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1869,6 +2775,8 @@ function readFamily(r) {
   r.pos++;
   r.depth--;
   if (((seen & 3) >>> 0) !== 3) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.title).length; if (n > 128) throw r.refuse("bad_value"); }
+  { const n = v.objects.length; if (n > 65536) throw r.refuse("bad_value"); }
   return v;
 }
 
@@ -1879,6 +2787,7 @@ function readModelsSnapshot(r) {
   const v = newModelsSnapshot();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1897,6 +2806,8 @@ function readModelsSnapshot(r) {
         seen |= 2;
         v.models = readList(r, readFamily);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1918,6 +2829,7 @@ function readHostState(r) {
   const v = newHostState();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -1983,7 +2895,13 @@ function readHostState(r) {
         if (seen & 8192) throw r.refuse("duplicate_field");
         seen |= 8192;
         v.availabilityCause = r.string();
+      } else if (key === "engines") {
+        if (seen & 16384) throw r.refuse("duplicate_field");
+        seen |= 16384;
+        v.engines = readList(r, readEngine);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -1995,6 +2913,7 @@ function readHostState(r) {
   r.pos++;
   r.depth--;
   if (((seen & 127) >>> 0) !== 127) throw r.refuse("missing_field");
+  { const n = v.engines.length; if (n > 64) throw r.refuse("bad_value"); }
   return v;
 }
 
@@ -2005,6 +2924,7 @@ function readAsk(r) {
   const v = newAsk();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2043,6 +2963,8 @@ function readAsk(r) {
         seen |= 64;
         v.host = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2064,6 +2986,7 @@ function readHostsSnapshot(r) {
   const v = newHostsSnapshot();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2090,6 +3013,8 @@ function readHostsSnapshot(r) {
         seen |= 8;
         v.asked = readList(r, readAsk);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2111,6 +3036,7 @@ function readDecision(r) {
   const v = newDecision();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2165,6 +3091,8 @@ function readDecision(r) {
         seen |= 1024;
         v.why = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2186,6 +3114,7 @@ function readPickResult(r) {
   const v = newPickResult();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2204,6 +3133,8 @@ function readPickResult(r) {
         seen |= 2;
         v.decision = readDecision(r);
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2273,6 +3204,7 @@ function readOffer(r) {
   const v = newOffer();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2310,7 +3242,13 @@ function readOffer(r) {
         if (seen & 64) throw r.refuse("duplicate_field");
         seen |= 64;
         v.unknown = r.strList();
+      } else if (key === "title") {
+        if (seen & 128) throw r.refuse("duplicate_field");
+        seen |= 128;
+        v.title = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2322,6 +3260,7 @@ function readOffer(r) {
   r.pos++;
   r.depth--;
   if (((seen & 63) >>> 0) !== 63) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.title).length; if (n > 128) throw r.refuse("bad_value"); }
   return v;
 }
 
@@ -2332,6 +3271,7 @@ function readOfferSnapshot(r) {
   const v = newOfferSnapshot();
   let seen = 0;
   r.ws();
+  const unknownKeys = new Set();
   if (r.at() !== 0x7d) {
     for (;;) {
       r.ws();
@@ -2354,6 +3294,8 @@ function readOfferSnapshot(r) {
         seen |= 4;
         v.outcome = r.string();
       } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
         r.skipValue();
       }
       r.ws();
@@ -2366,6 +3308,155 @@ function readOfferSnapshot(r) {
   r.depth--;
   if (((seen & 7) >>> 0) !== 7) throw r.refuse("missing_field");
     if (v.outcome !== "offered" && v.outcome !== "invalid" && v.outcome !== "unavailable" && v.outcome !== "forbidden" && v.outcome !== "not_permitted") { throw r.refuse("bad_enum"); }
+  return v;
+}
+
+function readOfferObservation(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOfferObservation();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "observation") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.observation = readObservation(r);
+      } else if (key === "offers") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.offers = readList(r, readOffer);
+      } else if (key === "outcome") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.outcome = r.string();
+      } else if (key === "cursor") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.cursor = r.string();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 15) >>> 0) !== 15) throw r.refuse("missing_field");
+  { const n = v.offers.length; if (n > 4096) throw r.refuse("bad_value"); }
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw r.refuse("bad_value"); }
+    if (v.outcome !== "offered" && v.outcome !== "invalid" && v.outcome !== "unavailable" && v.outcome !== "forbidden" && v.outcome !== "not_permitted") { throw r.refuse("bad_enum"); }
+  return v;
+}
+
+function readModalityPage(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newModalityPage();
+  let seen = 0;
+  r.ws();
+  const unknownKeys = new Set();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "outcome") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.outcome = r.string();
+      } else if (key === "modalities") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.modalities = r.strList();
+      } else if (key === "next") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.next = r.string();
+      } else if (key === "complete") {
+        if (seen & 8) throw r.refuse("duplicate_field");
+        seen |= 8;
+        v.complete = r.boolean();
+      } else {
+        if (unknownKeys.has(key)) throw r.refuse("duplicate_key");
+        unknownKeys.add(key);
+        r.skipValue();
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 15) >>> 0) !== 15) throw r.refuse("missing_field");
+  { const n = v.modalities.length; if (n > 64) throw r.refuse("bad_value"); }
+  if (Array.isArray(v.modalities)) { for (const oaElement of v.modalities) { if (typeof oaElement === "string") {
+  { const n = ENC.encode(oaElement).length; if (n < 1 || n > 256) throw r.refuse("bad_value"); }
+  } } }
+  { const n = ENC.encode(v.next).length; if (n > 256) throw r.refuse("bad_value"); }
+    if (v.outcome !== "page" && v.outcome !== "gap" && v.outcome !== "invalid" && v.outcome !== "forbidden" && v.outcome !== "unavailable" && v.outcome !== "not_permitted") { throw r.refuse("bad_enum"); }
+  return v;
+}
+
+function readOARouterModalitiesArguments(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterModalitiesArguments();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "cursor") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.cursor = r.string();
+      } else if (key === "limit") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.limit = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 3) >>> 0) !== 3) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw r.refuse("bad_value"); }
   return v;
 }
 
@@ -2509,6 +3600,50 @@ function readOARouterOfferArguments(r) {
   return v;
 }
 
+function readOARouterObserveOfferArguments(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterObserveOfferArguments();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "request") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.request = readOfferRequest(r);
+      } else if (key === "cursor") {
+        if (seen & 2) throw r.refuse("duplicate_field");
+        seen |= 2;
+        v.cursor = r.string();
+      } else if (key === "wait_ms") {
+        if (seen & 4) throw r.refuse("duplicate_field");
+        seen |= 4;
+        v.waitMs = r.integer(-9223372036854775808n, 9223372036854775807n);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 7) >>> 0) !== 7) throw r.refuse("missing_field");
+  { const n = ENC.encode(v.cursor).length; if (n > 256) throw r.refuse("bad_value"); }
+  return v;
+}
+
 function readOAServiceFrame(r) {
   if (r.at() !== 0x7b) throw r.refuse("wrong_type");
   r.enter();
@@ -2643,6 +3778,41 @@ function readOAServiceError(r) {
   r.pos++;
   r.depth--;
   if (((seen & 3) >>> 0) !== 3) throw r.refuse("missing_field");
+  return v;
+}
+
+function readOARouterModalitiesResult(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterModalitiesResult();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "value") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.value = readModalityPage(r);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1) >>> 0) !== 1) throw r.refuse("missing_field");
   return v;
 }
 
@@ -2786,6 +3956,41 @@ function readOARouterOfferResult(r) {
   return v;
 }
 
+function readOARouterObserveOfferResult(r) {
+  if (r.at() !== 0x7b) throw r.refuse("wrong_type");
+  r.enter();
+  r.pos++;
+  const v = newOARouterObserveOfferResult();
+  let seen = 0;
+  r.ws();
+  if (r.at() !== 0x7d) {
+    for (;;) {
+      r.ws();
+      if (r.at() !== 0x22) throw r.refuse("malformed");
+      const key = r.string();
+      r.ws();
+      if (r.at() !== 0x3a) throw r.refuse("malformed");
+      r.pos++;
+      r.ws();
+      if (key === "value") {
+        if (seen & 1) throw r.refuse("duplicate_field");
+        seen |= 1;
+        v.value = readOfferObservation(r);
+      } else {
+        throw r.refuse("unknown_field");
+      }
+      r.ws();
+      if (r.at() !== 0x2c) break;
+      r.pos++;
+    }
+  }
+  if (r.at() !== 0x7d) throw r.refuse("malformed");
+  r.pos++;
+  r.depth--;
+  if (((seen & 1) >>> 0) !== 1) throw r.refuse("missing_field");
+  return v;
+}
+
 export function decode(data) {
   const r = new Reader(data);
   r.ws();
@@ -2795,8 +4000,56 @@ export function decode(data) {
   return v;
 }
 
+const JSON_RECORDS = Object.freeze({
+  HostAllowance: [writeHostAllowance, readHostAllowance],
+  PickRequest: [writePickRequest, readPickRequest],
+  Caller: [writeCaller, readCaller],
+  Observation: [writeObservation, readObservation],
+  ReasoningSupport: [writeReasoningSupport, readReasoningSupport],
+  ModelCapabilities: [writeModelCapabilities, readModelCapabilities],
+  Alias: [writeAlias, readAlias],
+  Component: [writeComponent, readComponent],
+  Engine: [writeEngine, readEngine],
+  ModelEngine: [writeModelEngine, readModelEngine],
+  ModelObject: [writeModelObject, readModelObject],
+  Family: [writeFamily, readFamily],
+  ModelsSnapshot: [writeModelsSnapshot, readModelsSnapshot],
+  HostState: [writeHostState, readHostState],
+  Ask: [writeAsk, readAsk],
+  HostsSnapshot: [writeHostsSnapshot, readHostsSnapshot],
+  Decision: [writeDecision, readDecision],
+  PickResult: [writePickResult, readPickResult],
+  OfferRequest: [writeOfferRequest, readOfferRequest],
+  Offer: [writeOffer, readOffer],
+  OfferSnapshot: [writeOfferSnapshot, readOfferSnapshot],
+  OfferObservation: [writeOfferObservation, readOfferObservation],
+  ModalityPage: [writeModalityPage, readModalityPage],
+});
+
+// toJson writes one record, named by kind, as JSON laid out as this module's
+// documents are and without the document terminator.
+export function toJson(kind, value) {
+  const codec = Object.hasOwn(JSON_RECORDS, kind) ? JSON_RECORDS[kind] : undefined;
+  if (codec === undefined) throw new TypeError("toJson takes a record name of this module, not " + String(kind));
+  const out = new Out();
+  codec[0](out, value, 0);
+  return out.bytes();
+}
+
+// fromJson reads one record, named by kind, from data; a refused input throws Refusal.
+export function fromJson(kind, data) {
+  const codec = Object.hasOwn(JSON_RECORDS, kind) ? JSON_RECORDS[kind] : undefined;
+  if (codec === undefined) throw new TypeError("fromJson takes a record name of this module, not " + String(kind));
+  const r = new Reader(data);
+  r.ws();
+  const v = codec[1](r);
+  r.ws();
+  if (r.pos < r.buf.length) throw r.refuse("trailing_bytes");
+  return v;
+}
+
 // refusals is in the order two of them are chosen between.
-const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"];
+const refusals = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "bad_value", "trailing_bytes"];
 
 function refusalRank(word) {
   return refusals.indexOf(word);
@@ -2847,7 +4100,7 @@ function _serviceCheck(kind, value, depth = 0) {
     if (valid) for (const [name,type,omit] of fields) {
       if (!Object.hasOwn(value,name)) throw new Refusal("missing_field",0);
       const item = value[name];
-      if (omit === "absent" && item === null) continue;
+      if (omit === "absent" && (["i32","i64","bool"].includes(type) ? item === undefined : item === null)) continue;
       _serviceCheck(type,item,depth+1);
     }
   }
@@ -2859,29 +4112,40 @@ _serviceRecords["HostAllowance"] = [["hosts","list<string>","never"],];
 _serviceRecords["PickRequest"] = [["model","string","never"],["fresh","bool","never"],["allowed","HostAllowance","absent"],["profile","string","zero"],];
 _serviceRecords["Caller"] = [["userDescription","string","never"],["pathDescription","string","never"],];
 _serviceRecords["Observation"] = [["caller","Caller","never"],["tookMs","i64","never"],["cacheAgeMs","i64","never"],];
-_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],["heldIn","list<string>","zero"],["contextLength","i64","zero"],["effectiveContextLength","i64","zero"],];
+_serviceRecords["ReasoningSupport"] = [["efforts","list<string>","never"],["budget","bool","zero"],["defaultEffort","string","absent"],];
+_serviceRecords["ModelCapabilities"] = [["input","list<string>","zero"],["output","list<string>","zero"],["tools","bool","absent"],["structuredOutput","bool","absent"],["reasoning","ReasoningSupport","absent"],["extensions","list<string>","zero"],];
+_serviceRecords["Alias"] = [["host","string","never"],["name","string","never"],["resident","bool","never"],["servable","bool","never"],["hosted","bool","zero"],["profiles","list<string>","zero"],["heldIn","list<string>","zero"],["contextLength","i64","zero"],["effectiveContextLength","i64","zero"],["capabilities","ModelCapabilities","absent"],];
 _serviceRecords["Component"] = [["store","string","never"],["role","string","never"],["name","string","zero"],];
-_serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],["heldIn","list<string>","zero"],["familySource","string","zero"],["components","list<Component>","zero"],];
+_serviceRecords["Engine"] = [["id","string","never"],["name","string","never"],["version","string","zero"],["source","string","never"],];
+_serviceRecords["ModelEngine"] = [["host","string","never"],["model","string","never"],["engine","string","never"],["profiles","list<string>","never"],["source","string","never"],["role","string","zero"],];
+_serviceRecords["ModelObject"] = [["domain","string","never"],["store","string","never"],["name","string","never"],["object","string","zero"],["digest","string","zero"],["format","string","zero"],["architecture","string","zero"],["role","string","zero"],["engines","list<ModelEngine>","never"],["cause","string","never"],["why","string","never"],];
+_serviceRecords["Family"] = [["family","string","never"],["names","list<Alias>","never"],["heldIn","list<string>","zero"],["familySource","string","zero"],["components","list<Component>","zero"],["title","string","zero"],["objects","list<ModelObject>","zero"],];
 _serviceRecords["ModelsSnapshot"] = [["observation","Observation","never"],["models","list<Family>","never"],];
-_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],["availabilityCause","string","absent"],];
+_serviceRecords["HostState"] = [["host","string","never"],["base","string","never"],["up","bool","never"],["why","string","never"],["installed","i64","never"],["resident","list<string>","never"],["servable","bool","never"],["hosted","bool","zero"],["wire","string","zero"],["credential","string","zero"],["declaredBy","string","zero"],["profiles","list<string>","zero"],["domain","string","zero"],["availabilityCause","string","absent"],["engines","list<Engine>","zero"],];
 _serviceRecords["Ask"] = [["at","string","never"],["caller","string","never"],["user","string","never"],["model","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],];
 _serviceRecords["HostsSnapshot"] = [["observation","Observation","never"],["hosts","list<HostState>","never"],["doubled","list<string>","never"],["asked","list<Ask>","never"],];
 _serviceRecords["Decision"] = [["asked","string","never"],["family","string","never"],["verdict","string","never"],["host","string","never"],["model","string","never"],["endpoint","string","never"],["installedOn","list<string>","never"],["authorised","HostAllowance","absent"],["withheld","list<string>","never"],["loads","i64","never"],["why","string","never"],];
 _serviceRecords["PickResult"] = [["observation","Observation","never"],["decision","Decision","never"],];
 _serviceRecords["OfferRequest"] = [["profile","string","never"],["placement","string","never"],["reserve","i64","never"],["fresh","bool","never"],];
-_serviceRecords["Offer"] = [["family","string","never"],["names","list<string>","never"],["servers","list<string>","never"],["context","i64","never"],["contextSource","string","never"],["input","i64","never"],["unknown","list<string>","zero"],];
+_serviceRecords["Offer"] = [["family","string","never"],["names","list<string>","never"],["servers","list<string>","never"],["context","i64","never"],["contextSource","string","never"],["input","i64","never"],["unknown","list<string>","zero"],["title","string","zero"],];
 _serviceRecords["OfferSnapshot"] = [["observation","Observation","never"],["offers","list<Offer>","never"],["outcome","string","never"],];
+_serviceRecords["OfferObservation"] = [["observation","Observation","never"],["offers","list<Offer>","never"],["outcome","string","never"],["cursor","string","never"],];
+_serviceRecords["ModalityPage"] = [["outcome","string","never"],["modalities","list<string>","never"],["next","string","never"],["complete","bool","never"],];
+_serviceRecords["OARouterModalitiesArguments"] = [["cursor","string","never"],["limit","i64","never"],];
 _serviceRecords["OARouterModelsArguments"] = [["fresh","bool","never"],];
 _serviceRecords["OARouterHostsArguments"] = [["fresh","bool","never"],];
 _serviceRecords["OARouterPickArguments"] = [["request","PickRequest","never"],];
 _serviceRecords["OARouterOfferArguments"] = [["request","OfferRequest","never"],];
+_serviceRecords["OARouterObserveOfferArguments"] = [["request","OfferRequest","never"],["cursor","string","never"],["waitMs","i64","never"],];
 _serviceRecords["OAServiceFrame"] = [["version","i32","never"],["service","string","never"],["method","string","never"],["arguments","json","never"],];
 _serviceRecords["OAServiceReply"] = [["version","i32","never"],["service","string","never"],["method","string","never"],["ok","bool","never"],["payload","json","never"],];
 _serviceRecords["OAServiceError"] = [["code","string","never"],["message","string","never"],];
+_serviceRecords["OARouterModalitiesResult"] = [["value","ModalityPage","never"],];
 _serviceRecords["OARouterModelsResult"] = [["value","ModelsSnapshot","never"],];
 _serviceRecords["OARouterHostsResult"] = [["value","HostsSnapshot","never"],];
 _serviceRecords["OARouterPickResult"] = [["value","PickResult","never"],];
 _serviceRecords["OARouterOfferResult"] = [["value","OfferSnapshot","never"],];
+_serviceRecords["OARouterObserveOfferResult"] = [["value","OfferObservation","never"],];
 
 function _serviceRequest(service, method, argumentsBytes) {
   return _serviceEncode(writeOAServiceFrame, {
@@ -2904,6 +4168,19 @@ function _serviceResponse(frame, service, method) {
 
 export class RouterClient {
   constructor(transport) { this._transport = transport; }
+
+  async modalities(cursor, limit) {
+    const _args = newOARouterModalitiesArguments();
+    _args.cursor = cursor;
+    _args.limit = limit;
+    _serviceCheck("OARouterModalitiesArguments", _args);
+    const _payload = _serviceEncode(writeOARouterModalitiesArguments, _args, 1);
+    _serviceDecode(readOARouterModalitiesArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "Modalities", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Modalities");
+    const _result = _serviceDecode(readOARouterModalitiesResult, _reply, 1);
+    return _result.value;
+  }
 
   async models(fresh) {
     const _args = newOARouterModelsArguments();
@@ -2950,6 +4227,20 @@ export class RouterClient {
     const _request = _serviceRequest("abstraction.router/router@1", "Offer", _payload);
     const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "Offer");
     const _result = _serviceDecode(readOARouterOfferResult, _reply, 1);
+    return _result.value;
+  }
+
+  async observeOffer(request, cursor, waitMs) {
+    const _args = newOARouterObserveOfferArguments();
+    _args.request = request;
+    _args.cursor = cursor;
+    _args.waitMs = waitMs;
+    _serviceCheck("OARouterObserveOfferArguments", _args);
+    const _payload = _serviceEncode(writeOARouterObserveOfferArguments, _args, 1);
+    _serviceDecode(readOARouterObserveOfferArguments, _payload, 1);
+    const _request = _serviceRequest("abstraction.router/router@1", "ObserveOffer", _payload);
+    const _reply = _serviceResponse(await this._transport.exchangeFrame(_request), "abstraction.router/router@1", "ObserveOffer");
+    const _result = _serviceDecode(readOARouterObserveOfferResult, _reply, 1);
     return _result.value;
   }
 }

@@ -8,55 +8,83 @@ import (
 	"fmt"
 	identity "github.com/openabstractions/abstraction-identity"
 	"github.com/openabstractions/abstraction-identity/listen"
+	"github.com/openabstractions/abstraction-rights/go/authorization/gate"
 	router "github.com/openabstractions/abstraction-router/go"
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
+	"github.com/openabstractions/abstraction-router/go/internal/admission"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Host struct {
-	listener  listen.Listener
-	router    *router.Router
-	ctx       context.Context
-	cancel    context.CancelFunc
-	once      sync.Once
-	workers   sync.WaitGroup
-	lifecycle sync.Mutex
-	serving   bool
-	policy    Policy
-	OnError   func(error)
+	listener    listen.Listener
+	router      *router.Router
+	ctx         context.Context
+	cancel      context.CancelFunc
+	once        sync.Once
+	workers     sync.WaitGroup
+	lifecycle   sync.Mutex
+	serving     bool
+	policy      Policy
+	hostListing HostListing
+	OnError     func(error)
 	// OnStopped is called when admission stops. Assign it before Serve.
 	OnStopped func()
 }
 
 // Router refusal codes for an explicit receiving policy.
 const (
-	CodeForbidden   = "forbidden"
-	CodeUnavailable = "unavailable"
+	CodeForbidden   = admission.CodeForbidden
+	CodeUnavailable = router.CodeUnavailable
 )
 
 // Actions a Policy receives, and the resource each names.
 const (
-	// ActionInventory covers Models and Hosts; its resource is ResourceInventory.
-	ActionInventory   = "abstraction.router/inventory.read"
-	ResourceInventory = "abstraction.router/inventory"
+	// ActionInventory covers Models, Hosts and Offer; its resource is
+	// ResourceInventory (CONTRACT.md ROUTE-A2; VISION ROUTE-D8 "read under
+	// inventory.read").
+	ActionInventory   = admission.ActionInventory
+	ResourceInventory = admission.ResourceInventory
 	// ActionRoute covers Pick; its resource is ResourceRoutes for every model
 	// (research/rights-defaults/DECISION.md §1). The per-host switch is
 	// inference complete on host:<name>.
-	ActionRoute    = "abstraction.router/route"
-	ResourceRoutes = "abstraction.router/routes"
+	ActionRoute    = admission.ActionRoute
+	ResourceRoutes = admission.ResourceRoutes
 )
 
+// actionNamespace is the namespace every router action belongs to; the host
+// designates the policy it installs for it (RIGHTS-A7).
+const actionNamespace = admission.Namespace
+
 // Policy authorizes one router operation for the rechecked bound caller. It
-// must honor ctx and be safe for concurrent calls. Wrap ErrPolicyUnavailable
-// when the decision cannot be obtained; every other error is a refusal.
-type Policy func(ctx context.Context, peer *identity.Peer, action, resource string) error
+// is the rights gate: it must honor ctx and be safe for concurrent calls.
+// Wrap ErrPolicyUnavailable when the decision cannot be obtained; every other
+// error is a refusal.
+type Policy = gate.Gate
+
+// HostListing narrows a native caller's host observation using the receiving
+// runtime's credential and host-use owners. It reads no credential value.
+type HostListing func(context.Context, *identity.Peer, []router.HostState) ([]router.HostState, error)
+
+func (h *Host) EnableHostListing(check HostListing) error {
+	h.lifecycle.Lock()
+	defer h.lifecycle.Unlock()
+	if h.serving || h.ctx.Err() != nil || check == nil {
+		return errors.New("router service: configure host listing before Serve")
+	}
+	h.hostListing = check
+	return nil
+}
 
 // ErrPolicyUnavailable distinguishes a failed decision lookup from refusal.
-var ErrPolicyUnavailable = errors.New("router service: policy unavailable")
+var ErrPolicyUnavailable = gate.ErrUnavailable
 
 // EnablePolicy narrows every operation to callers the policy authorizes.
-// Configure it before Serve. Without it bound callers keep access.
+// Configure it before Serve. Without it every operation reads unavailable
+// (ROUTE-E2, ROUTE-E3): a missing policy is never a permit. The installed
+// policy is designated for the router's namespace and refuses every action
+// outside it (RIGHTS-A7).
 func (h *Host) EnablePolicy(policy Policy) error {
 	h.lifecycle.Lock()
 	defer h.lifecycle.Unlock()
@@ -66,7 +94,11 @@ func (h *Host) EnablePolicy(policy Policy) error {
 	if policy == nil {
 		return errors.New("router service: explicit policy required")
 	}
-	h.policy = policy
+	designated, err := gate.For(actionNamespace, policy)
+	if err != nil {
+		return fmt.Errorf("router service: %w", err)
+	}
+	h.policy = designated
 	return nil
 }
 
@@ -107,6 +139,7 @@ func (h *Host) Serve(ctx context.Context) error {
 		}
 	}()
 	defer h.Close()
+	slots := listen.NewCallAdmission(64)
 	for {
 		conn, err := h.listener.Accept()
 		if err != nil {
@@ -115,18 +148,27 @@ func (h *Host) Serve(ctx context.Context) error {
 			}
 			return err
 		}
+		release, admitted := slots.Take(conn)
+		if !admitted {
+			continue
+		}
 		h.workers.Add(1)
 		go func() {
 			defer h.workers.Done()
+			defer release()
 			defer conn.Close()
-			requestCtx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
-			defer cancel()
-			call, err := listen.ReceiveFramed(requestCtx, conn, router.Bound, 1<<20)
+			// The call lives long enough for an ObserveOffer wait; every other
+			// operation keeps its ordinary ten seconds (requestCtx).
+			callCtx, cancelCall := context.WithTimeout(h.ctx, router.MaxOfferWait+observeCallBudget)
+			defer cancelCall()
+			call, err := listen.ReceiveFramed(callCtx, conn, router.Bound, 1<<20)
 			if call != nil {
 				defer call.Close()
 			}
 			if err == nil {
-				dispatch := wire.RouterDispatcher{Handler: (&receiver{provider: h.router, call: call, policy: policy, ctx: requestCtx}).views()}
+				requestCtx, cancel := context.WithTimeout(callCtx, observeCallBudget)
+				defer cancel()
+				dispatch := wire.RouterDispatcher{Handler: (&receiver{provider: h.router, call: call, policy: policy, hostListing: h.hostListing, ctx: requestCtx, serve: callCtx}).views()}
 				var response []byte
 				response, err = dispatch.ExchangeFrame(call.Frame)
 				if err == nil {
@@ -141,18 +183,57 @@ func (h *Host) Serve(ctx context.Context) error {
 }
 
 type receiver struct {
-	provider *router.Router
-	call     *listen.FramedCall
-	policy   Policy
-	ctx      context.Context
+	provider    *router.Router
+	call        *listen.FramedCall
+	policy      Policy
+	hostListing HostListing
+	ctx         context.Context
+	// serve outlives one call's ordinary deadline: ObserveOffer waits from
+	// it for up to its wait plus observeCallBudget.
+	serve context.Context
+}
+
+// observeCallBudget is what an ObserveOffer call may take beyond its wait:
+// the ordinary call's time to read and answer.
+const observeCallBudget = 10 * time.Second
+
+// opRight is the right each served operation decides (CONTRACT.md
+// ROUTE-A2): reading what exists, offers included, decides inventory.read;
+// only a routing decision decides route. Any other operation is refused, so a
+// later operation never inherits a read right by default.
+func opRight(op string) (action, resource string, known bool) {
+	switch op {
+	case router.OpModels, router.OpResidency, router.OpOffer, router.OpObserveOffer, router.OpModalities:
+		return ActionInventory, ResourceInventory, true
+	case router.OpRoute:
+		return ActionRoute, ResourceRoutes, true
+	}
+	return "", "", false
+}
+
+// offerOp says whether op is answered and gated as Offer is (ROUTE-A2).
+func offerOp(op string) bool { return op == router.OpOffer || op == router.OpObserveOffer }
+
+// replyMargin is the part of a call's deadline kept for writing the reply, so
+// a fresh survey that outlasts the call is refused while the caller still
+// waits for the answer.
+const replyMargin = time.Second
+
+// callContext is the call's deadline less replyMargin, or Background for a
+// receiver built without one.
+func (r *receiver) callContext() (context.Context, context.CancelFunc) {
+	if r.ctx == nil {
+		return context.Background(), func() {}
+	}
+	if deadline, ok := r.ctx.Deadline(); ok {
+		return context.WithDeadline(r.ctx, deadline.Add(-replyMargin))
+	}
+	return r.ctx, func() {}
 }
 
 // authorize applies the configured policy to one operation after the caller
 // binding is rechecked and before the provider is asked.
 func (r *receiver) authorize(action, resource string) error {
-	if r.policy == nil {
-		return nil
-	}
 	ctx := r.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -161,14 +242,14 @@ func (r *receiver) authorize(action, resource string) error {
 	if err != nil {
 		return &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller identity could not be rechecked"}
 	}
-	err = r.policy(ctx, peer, action, resource)
-	if err == nil && ctx.Err() == nil {
+	err = r.policy.Check(ctx, peer, action, resource)
+	if err == nil {
 		return nil
 	}
-	if ctx.Err() != nil || errors.Is(err, ErrPolicyUnavailable) {
+	if errors.Is(err, ErrPolicyUnavailable) {
 		return &wire.ServiceError{Code: CodeUnavailable, Message: "rights:unavailable"}
 	}
-	return &wire.ServiceError{Code: CodeForbidden, Message: "router operation not permitted"}
+	return &wire.ServiceError{Code: CodeForbidden, Message: admission.ForbiddenMessage(err)}
 }
 
 func (r *receiver) answer(request router.Request) (router.Response, error) {
@@ -178,12 +259,15 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 	if err := r.call.Recheck(); err != nil {
 		return router.Response{}, &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller binding no longer valid"}
 	}
-	action, resource := ActionInventory, ResourceInventory
-	if request.Op == router.OpRoute {
-		action, resource = ActionRoute, ResourceRoutes
+	action, resource, known := opRight(request.Op)
+	if !known {
+		return router.Response{}, &wire.ServiceError{Code: router.CodeUnknownOperation, Message: "router operation not served"}
 	}
 	if err := r.authorize(action, resource); err != nil {
-		if request.Op == router.OpOffer {
+		if request.Op == router.OpModalities {
+			return router.Response{}, modalityDecisionError(err)
+		}
+		if offerOp(request.Op) {
 			var refusal *wire.ServiceError
 			if errors.As(err, &refusal) {
 				switch refusal.Code {
@@ -197,8 +281,30 @@ func (r *receiver) answer(request router.Request) (router.Response, error) {
 		return router.Response{}, err
 	}
 	// Caller is created by ReceiveFramed after checking router.Bound, never decoded.
-	out := r.provider.Answer(request, r.call.Caller)
-	if request.Op == router.OpOffer {
+	ctx, cancel := r.callContext()
+	if request.Op == router.OpObserveOffer && r.serve != nil {
+		cancel()
+		ctx, cancel = context.WithTimeout(r.serve, request.Wait+observeCallBudget)
+	}
+	defer cancel()
+	if request.Op == router.OpModalities && ctx.Err() != nil {
+		return router.Response{}, &modalityRefusal{wire.ModalityOutcomeUnavailable}
+	}
+	out := r.provider.AnswerContext(ctx, request, r.call.Caller)
+	if request.Op == router.OpResidency && r.hostListing != nil {
+		peer, err := r.call.Peer()
+		if err != nil {
+			return router.Response{}, &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller identity could not be rechecked"}
+		}
+		out.Hosts, err = r.hostListing(ctx, peer, out.Hosts)
+		if err != nil {
+			return router.Response{}, &wire.ServiceError{Code: CodeUnavailable, Message: "host listing unavailable"}
+		}
+		if err := r.call.Recheck(); err != nil {
+			return router.Response{}, &wire.ServiceError{Code: router.CodeCallerRefused, Message: "caller binding no longer valid"}
+		}
+	}
+	if offerOp(request.Op) {
 		return out, providerOfferResponseError(out)
 	}
 	return out, providerResponseError(out)
@@ -238,12 +344,9 @@ func observation(r router.Response) wire.Observation {
 	return wire.Observation{Caller: wire.Caller{UserDescription: r.Caller.User, PathDescription: r.Caller.Path}, TookMs: r.TookMS, CacheAgeMs: r.AgeMS}
 }
 
-// toWireAlias is the one place that carries router.Alias's fields onto the
-// generated wire.Alias. convert_test.go checks by reflection that the two
-// structs' field sets still match, so a field added to either without this
-// function updated fails a test instead of dropping silently.
+// toWireAlias converts the legacy line-protocol alias to the framed wire record.
 func toWireAlias(a router.Alias) wire.Alias {
-	return wire.Alias{Host: a.Host, Name: a.Name, Resident: a.Resident, Servable: a.Servable, Hosted: a.Hosted, Profiles: a.Profiles, HeldIn: a.HeldIn, ContextLength: a.ContextLength, EffectiveContextLength: a.EffectiveContextLength}
+	return wire.Alias(a)
 }
 
 // toWireFamily is the one place that carries router.Family's fields onto the
@@ -251,7 +354,7 @@ func toWireAlias(a router.Alias) wire.Alias {
 // each of its Components through toWireComponent. convert_test.go's
 // reflection parity test covers it the same way as toWireAlias.
 func toWireFamily(f router.Family) wire.Family {
-	out := wire.Family{Family: f.Family, HeldIn: f.HeldIn, FamilySource: f.FamilySource}
+	out := wire.Family{Family: f.Family, HeldIn: f.HeldIn, FamilySource: f.FamilySource, Title: f.Title, Objects: f.Objects}
 	for _, a := range f.Names {
 		out.Names = append(out.Names, toWireAlias(a))
 	}
@@ -278,6 +381,7 @@ func toWireHostState(h router.HostState) wire.HostState {
 		cause := wire.AvailabilityCause(h.AvailabilityCause)
 		state.AvailabilityCause = &cause
 	}
+	state.Engines = h.Engines
 	return state
 }
 
@@ -285,14 +389,14 @@ func toWireHostState(h router.HostState) wire.HostState {
 // also the timestamp format for the legacy wire.Ask over the framed
 // protocol. convert_test.go parses wire.Ask's At back with the same layout
 // to check the value round-trips.
-const askTimeLayout = "2006-01-02T15:04:05.000000Z"
+const askTimeLayout = wire.TimestampLayout
 
 // toWireAsk is the one place that carries router.Ask's fields onto the
 // generated wire.Ask. At formats router.Ask's time.Time as the string
 // wire.Ask carries instead. convert_test.go's reflection parity test covers
 // it the same way as toWireAlias.
 func toWireAsk(a router.Ask) wire.Ask {
-	return wire.Ask{At: a.At.UTC().Format(askTimeLayout), Caller: a.Caller, User: a.User, Model: a.Model, Family: a.Family, Verdict: a.Verdict, Host: a.Host}
+	return wire.Ask{At: wire.FormatTimestamp(a.At), Caller: a.Caller, User: a.User, Model: a.Model, Family: a.Family, Verdict: a.Verdict, Host: a.Host}
 }
 
 // toWireDecision is the one place that carries router.Decision's fields onto
@@ -317,7 +421,7 @@ func (answer answerFunc) Models(fresh bool) (wire.ModelsSnapshot, error) {
 	for _, f := range out.Models {
 		value.Models = append(value.Models, toWireFamily(f))
 	}
-	return value, nil
+	return fitReply("Models", value)
 }
 func (answer answerFunc) Hosts(fresh bool) (wire.HostsSnapshot, error) {
 	out, err := answer(router.Request{Op: router.OpResidency, Fresh: fresh})
@@ -331,7 +435,7 @@ func (answer answerFunc) Hosts(fresh bool) (wire.HostsSnapshot, error) {
 	for _, a := range out.Asked {
 		value.Asked = append(value.Asked, toWireAsk(a))
 	}
-	return value, nil
+	return fitReply("Hosts", value)
 }
 
 // fromWirePickRequest is the one place that carries wire.PickRequest's
@@ -376,7 +480,7 @@ func fromWireOfferRequest(o wire.OfferRequest) router.Request {
 // toWireOffer is the one place that carries router.Offer's fields onto the
 // generated wire.Offer. convert_test.go's reflection parity test covers it.
 func toWireOffer(o router.Offer) wire.Offer {
-	return wire.Offer{Family: o.Family, Names: o.Names, Servers: o.Servers, Context: o.Context, ContextSource: wire.ContextSource(o.ContextSource), Input: o.Input, Unknown: o.Unknown}
+	return wire.Offer{Family: o.Family, Names: o.Names, Servers: o.Servers, Context: o.Context, ContextSource: wire.ContextSource(o.ContextSource), Input: o.Input, Unknown: o.Unknown, Title: o.Title}
 }
 
 func (answer answerFunc) Offer(request wire.OfferRequest) (wire.OfferSnapshot, error) {
@@ -392,7 +496,33 @@ func (answer answerFunc) Offer(request wire.OfferRequest) (wire.OfferSnapshot, e
 	for _, o := range out.Offers {
 		value.Offers = append(value.Offers, toWireOffer(o))
 	}
-	return value, nil
+	return fitReply("Offer", value)
+}
+
+// ObserveOffer answers router@1 ObserveOffer through the same answer, gate
+// and refusals as Offer; a refusal carries an empty cursor.
+func (answer answerFunc) ObserveOffer(request wire.OfferRequest, cursor string, waitMs int64) (wire.OfferObservation, error) {
+	refused := func(outcome wire.OfferOutcome) wire.OfferObservation {
+		return wire.OfferObservation{Outcome: outcome, Offers: []wire.Offer{}}
+	}
+	if waitMs < 0 || waitMs > router.MaxOfferWait.Milliseconds() {
+		return refused(wire.OfferOutcomeInvalid), nil
+	}
+	req := fromWireOfferRequest(request)
+	req.Op, req.Cursor, req.Wait = router.OpObserveOffer, cursor, time.Duration(waitMs)*time.Millisecond
+	out, err := answer(req)
+	if err != nil {
+		var refusal *offerRefusal
+		if errors.As(err, &refusal) {
+			return refused(refusal.outcome), nil
+		}
+		return wire.OfferObservation{}, err
+	}
+	value := wire.OfferObservation{Outcome: wire.OfferOutcomeOffered, Observation: observation(out), Offers: []wire.Offer{}, Cursor: out.Cursor}
+	for _, o := range out.Offers {
+		value.Offers = append(value.Offers, toWireOffer(o))
+	}
+	return fitReply("ObserveOffer", value)
 }
 
 // offerRefusal carries a business decision made after caller binding. Older
@@ -400,3 +530,43 @@ func (answer answerFunc) Offer(request wire.OfferRequest) (wire.OfferSnapshot, e
 type offerRefusal struct{ outcome wire.OfferOutcome }
 
 func (e *offerRefusal) Error() string { return "router offer: " + e.outcome.String() }
+
+type modalityRefusal struct{ outcome wire.ModalityOutcome }
+
+func (e *modalityRefusal) Error() string { return "router modalities: " + e.outcome.String() }
+func modalityDecisionError(err error) error {
+	var refusal *wire.ServiceError
+	if errors.As(err, &refusal) {
+		switch refusal.Code {
+		case CodeForbidden:
+			return &modalityRefusal{wire.ModalityOutcomeNotPermitted}
+		case CodeUnavailable:
+			return &modalityRefusal{wire.ModalityOutcomeUnavailable}
+		}
+	}
+	return err
+}
+func (answer answerFunc) Modalities(cursor string, limit int64) (wire.ModalityPage, error) {
+	out, err := answer(router.Request{Op: router.OpModalities, Cursor: cursor, Limit: limit})
+	if err != nil {
+		var refusal *modalityRefusal
+		if errors.As(err, &refusal) {
+			return wire.ModalityPage{Outcome: refusal.outcome, Modalities: []string{}}, nil
+		}
+		return wire.ModalityPage{}, err
+	}
+	if out.ModalityPage == nil {
+		return wire.ModalityPage{Outcome: wire.ModalityOutcomeUnavailable, Modalities: []string{}}, nil
+	}
+	p := out.ModalityPage
+	outcome, ok := wire.ParseModalityOutcome(p.Outcome)
+	if !ok || len(p.Modalities) > 64 || len(p.Next) > 256 || !utf8.ValidString(p.Next) {
+		return wire.ModalityPage{Outcome: wire.ModalityOutcomeUnavailable, Modalities: []string{}}, nil
+	}
+	for _, profile := range p.Modalities {
+		if !router.ValidModality(profile) {
+			return wire.ModalityPage{Outcome: wire.ModalityOutcomeUnavailable, Modalities: []string{}}, nil
+		}
+	}
+	return wire.ModalityPage{Outcome: outcome, Modalities: p.Modalities, Next: p.Next, Complete: p.Complete}, nil
+}

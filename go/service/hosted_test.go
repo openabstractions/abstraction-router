@@ -11,15 +11,80 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	identity "github.com/openabstractions/abstraction-identity"
+	"github.com/openabstractions/abstraction-identity/listen"
 	router "github.com/openabstractions/abstraction-router/go"
 	"github.com/openabstractions/abstraction-router/go/client"
 )
 
 const secret = "sk-FIXTURE-hosted-19ab"
+
+func TestHostedCallerListingUsesRecheckedPeerOverIPC(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"fixture-model"}]}`))
+	}))
+	defer upstream.Close()
+	r := router.New(router.NewHosted("fixture", upstream.URL, router.WireOpenAICompatible, ""), router.NewHosted("available", upstream.URL, router.WireOpenAICompatible, ""))
+	endpoint := endpointFor(t)
+	if err := listen.CanEver(endpoint, router.Bound); err != nil {
+		t.Skip(err)
+	}
+	h, err := Listen(endpoint, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enableLocalGate(h); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	if err := h.EnableHostListing(func(ctx context.Context, peer *identity.Peer, hosts []router.HostState) ([]router.HostState, error) {
+		if _, err := identity.SubjectOf(peer, listen.Program); err != nil {
+			return nil, err
+		}
+		calls.Add(1)
+		out := append([]router.HostState(nil), hosts...)
+		for i := range out {
+			if out[i].Host == "fixture" {
+				out[i].Servable = false
+				out[i].AvailabilityCause = router.AvailabilityRights
+			}
+		}
+		return out, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.Serve(ctx) }()
+	defer func() { cancel(); <-done }()
+	for range 2 {
+		view, err := client.New(endpoint).Hosts(true)
+		if err != nil || len(view.Hosts) != 2 {
+			t.Fatal(view, err)
+		}
+		for _, host := range view.Hosts {
+			if host.Host == "fixture" && (host.Servable || host.AvailabilityCause == nil || string(*host.AvailabilityCause) != "rights") {
+				t.Fatal("denied host lost its refusal", host)
+			}
+			if host.Host == "available" && (!host.Servable || host.AvailabilityCause != nil) {
+				t.Fatal("one denied host suppressed the available host", host)
+			}
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatal("caller projection was cached", calls.Load())
+	}
+	shared, _, _, _, _ := r.Residency(false)
+	for _, host := range shared {
+		if !host.Servable {
+			t.Fatal("caller projection changed shared state")
+		}
+	}
+}
 
 func endpointFor(t *testing.T) string {
 	t.Helper()
@@ -59,8 +124,14 @@ func TestHostedHostOverIPC(t *testing.T) {
 		return map[string]string{"Authorization": "Bearer " + secret}, nil
 	})
 	endpoint := endpointFor(t)
+	if err := listen.CanEver(endpoint, router.Bound); err != nil {
+		t.Skip(err)
+	}
 	h, err := Listen(endpoint, r)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enableLocalGate(h); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

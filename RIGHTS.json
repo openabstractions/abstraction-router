@@ -16,14 +16,17 @@
         "operations": [
           "abstraction.router/router@1#Models",
           "abstraction.router/router@1#Hosts",
-          "abstraction.router/router@1#Offer"
+          "abstraction.router/router@1#Offer",
+          "abstraction.router/router@1#ObserveOffer",
+          "abstraction.model/catalog@1#Fit"
         ],
         "resource_profile": "abstraction.rights/legacy-exact-string@1",
         "resource_type": "string (legacy exact resource)",
         "enforced_by": [
-          "abstraction.router/router@1"
+          "abstraction.router/router@1",
+          "abstraction.model/catalog@1"
         ],
-        "disclosure": "Read inventory/offer candidates; no loading/unloading.",
+        "disclosure": "Read inventory/offer candidates; no loading/unloading. Fit ranks the model catalogue against what runtimes serve; no download or selection.",
         "lifecycle": "Account-wide models/servers, credential names, routing observations. First use asks the person: an app that lists models has no other path (default-policy D5).",
         "first_use": "exact",
         "served": true

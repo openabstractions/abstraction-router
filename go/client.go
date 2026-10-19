@@ -5,14 +5,26 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/openabstractions/abstraction-facade/go-core/bootstrap"
 	"github.com/openabstractions/abstraction-identity/listen"
 )
 
 type Client struct{ Endpoint string }
 
-func DefaultEndpoint() string { return listen.Endpoint("router") }
+// DefaultEndpoint returns empty when the account namespace is unavailable.
+func DefaultEndpoint() string { value, _ := bootstrap.Endpoint("router"); return value }
+func missingEndpointError() error {
+	_, err := bootstrap.Endpoint("router")
+	if err != nil {
+		return err
+	}
+	return errors.New("router: empty endpoint")
+}
 
 func (c *Client) Ask(req Request) (Response, error) {
+	if c.Endpoint == "" {
+		return Response{}, missingEndpointError()
+	}
 	nc, err := listen.Dial(c.Endpoint)
 	if err != nil {
 		return Response{}, errors.New("router: no service at " + c.Endpoint + " (" + err.Error() + ")")

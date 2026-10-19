@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	identity "github.com/openabstractions/abstraction-identity"
-	"github.com/openabstractions/abstraction-identity/listen"
 	router "github.com/openabstractions/abstraction-router/go"
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
 	"github.com/openabstractions/abstraction-router/go/client"
@@ -75,7 +74,7 @@ func TestOfferOverIPC(t *testing.T) {
 		t.Fatalf("local offers %+v %v", local.Offers, err)
 	}
 	mu.Lock()
-	if len(actions) != 2 || actions[0] != ActionInventory+" "+ResourceInventory {
+	if len(actions) != 2 || actions[0] != ActionInventory+" "+ResourceInventory || actions[1] != ActionInventory+" "+ResourceInventory {
 		t.Fatalf("policy asked %q", actions)
 	}
 	refuse = true
@@ -167,7 +166,7 @@ func TestOfferBusinessRefusalsAreTypedAndEnvelopeFailuresRemainErrors(t *testing
 }
 
 func TestOfferUnmappedRemoteCallerRemainsABindingError(t *testing.T) {
-	_, err := Remote(nil, listen.Seen{}).Offer(wire.OfferRequest{Placement: wire.PlacementAny})
+	_, err := Remote(context.Background(), nil, RemoteCaller{}, nil).Offer(wire.OfferRequest{Placement: wire.PlacementAny})
 	var refusal *wire.ServiceError
 	if !errors.As(err, &refusal) || refusal.Code != router.CodeCallerRefused {
 		t.Fatalf("unmapped caller: %v", err)

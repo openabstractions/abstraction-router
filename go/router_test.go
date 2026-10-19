@@ -1,6 +1,9 @@
 package router
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,7 +79,7 @@ func TestWouldLoadNamesTheHostAndLoadsNothing(t *testing.T) {
 
 func TestGraphWeightsAreRefusedRatherThanRouted(t *testing.T) {
 	d, _ := machine(t).Route(Request{Model: modelid.Family("wan2.2_ti2v_5B_fp16.safetensors")})
-	if d.Verdict != NoHost {
+	if d.Verdict != NotOnDisk {
 		t.Fatalf("a diffusion model was offered to the chat profile: %+v", d)
 	}
 }
@@ -103,24 +106,59 @@ func TestDoubledIsNamedWhileItHappens(t *testing.T) {
 
 type unbindable struct {
 	*strings.Reader
-	out strings.Builder
+	out                              strings.Builder
+	binds, readsAfterRefusal, closes int
 }
 
+func (u *unbindable) Read(p []byte) (int, error) {
+	if u.binds != 0 {
+		u.readsAfterRefusal++
+	}
+	return u.Reader.Read(p)
+}
 func (u *unbindable) Write(p []byte) (int, error) { return u.out.Write(p) }
-func (u *unbindable) Close() error                { return nil }
+func (u *unbindable) Close() error                { u.closes++; return nil }
 func (u *unbindable) Bind() (*identity.Binding, error) {
+	u.binds++
 	return nil, identity.ErrNoBinding
 }
 
 func TestACallerTheKernelCannotIdentifyIsRefusedBeforeTheFrameIsRead(t *testing.T) {
-	c := &unbindable{Reader: strings.NewReader(`{"op":"route","model":"qwen3.6-35b-a3b"} and this is not JSON` + "\n")}
-	(&Service{r: machine(t)}).serve(c)
-	got := c.out.String()
-	if !strings.Contains(got, "refused:") || !strings.Contains(got, identity.ErrNoBinding.Error()) {
-		t.Fatalf("an unidentifiable caller was not refused: %s", got)
-	}
-	if strings.Contains(got, "not a request") {
-		t.Fatal("the frame was parsed before the caller was known")
+	for _, body := range []string{
+		`{"op":"route","model":"inert"} and this is not JSON`,
+		`{"op":"route","model":"inert","fresh":true}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			// Legacy Windows binding needs an opaque transport read first. The
+			// failed binding must expose no request frame to the service.
+			probe := &unbindable{Reader: strings.NewReader(body + "\n")}
+			call, err := listen.Receive(probe, Bound, maxFrame)
+			if !errors.Is(err, identity.ErrNoBinding) || call.Caller.Bound || len(call.Frame) != 0 {
+				t.Fatalf("refused receive exposed a request: %+v %v", call, err)
+			}
+			call.Close()
+			if probe.binds != 1 || probe.readsAfterRefusal != 0 || probe.closes != 1 {
+				t.Fatal("refused receive lifetime changed")
+			}
+
+			surveys := 0
+			r := New(&Host{Name: "inert", listing: func(context.Context, *Host, map[string]string) ([]string, error) {
+				surveys++
+				return nil, nil
+			}})
+			c := &unbindable{Reader: strings.NewReader(body + "\n")}
+			(&Service{r: r}).serve(c)
+			var out Response
+			if err := json.Unmarshal([]byte(c.out.String()), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Code != CodeCallerRefused || out.Caller.Bound || out.Decision != nil {
+				t.Fatalf("unidentified caller: %+v", out)
+			}
+			if surveys != 0 || len(r.Asked()) != 0 || c.binds != 1 || c.readsAfterRefusal != 0 || c.closes != 1 {
+				t.Fatalf("refusal reached routing or continued reading: surveys=%d asked=%d connection=%+v", surveys, len(r.Asked()), c)
+			}
+		})
 	}
 }
 
@@ -130,7 +168,7 @@ func TestTheWindowObservesAndCannotDecide(t *testing.T) {
 		t.Fatalf("the read-only window could not observe: %+v", out)
 	}
 	out := r.Answer(Request{Op: OpRoute, Model: "qwen3.6-35b-a3b"}, Unidentified)
-	if !strings.HasPrefix(out.Error, "refused:") || out.Decision != nil {
+	if out.Code != CodeCallerRefused || out.Caller.Bound || out.Decision != nil {
 		t.Fatalf("an unidentified caller got a routing decision: %+v", out)
 	}
 	if len(r.Asked()) != 0 {

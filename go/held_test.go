@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -154,9 +155,8 @@ func TestAStoresPathReachesAHostsShorterAlias(t *testing.T) {
 	}
 }
 
-// ComfyUI's server lists a model under exactly the path its own store uses
-// (folder/file, tree.Observe's name): an exact match needs no suffix, and
-// the alias's held_in reaches it through the same key as the family would.
+// A ComfyUI component retains its exact held-store association without becoming
+// an executable image model merely because the host lists its file.
 func TestAComfyUIAliasMatchesItsStoreNameExactly(t *testing.T) {
 	comfy := serve(t, map[string]string{
 		"/models":                  `["diffusion_models"]`,
@@ -175,6 +175,9 @@ func TestAComfyUIAliasMatchesItsStoreNameExactly(t *testing.T) {
 	}
 	if len(f.Names) != 1 || f.Names[0].Name != "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" {
 		t.Fatalf("names %+v", f.Names)
+	}
+	if f.Names[0].Host != "" {
+		t.Fatalf("a held component became runnable: %+v", f.Names[0])
 	}
 	if !slices.Equal(f.Names[0].HeldIn, []string{"comfyui"}) {
 		t.Fatalf("alias held_in %v", f.Names[0].HeldIn)
@@ -394,5 +397,56 @@ func TestProvenanceIsAdditiveAndNeverRouted(t *testing.T) {
 	d, _ := r.Route(Request{Model: "wan2.2_ti2v_5B_fp16.safetensors"})
 	if d.Verdict != NotOnDisk || len(d.InstalledOn) != 0 {
 		t.Fatalf("decision %+v", d)
+	}
+}
+
+// A model host serving a store's file under a name of its own reaches that
+// file's family by the object its declaration associates with the name,
+// whatever the name says: the person's --as name on a GGUF the store keeps
+// under its digest is one family, servable, held where the file is. The
+// journeys of 2026-11-12 listed such a file twice, once held and unservable
+// as "Unnamed model", once served and held nowhere (ROUTE-N5).
+func TestADeclaredObjectJoinsTheServedNameToItsFamily(t *testing.T) {
+	digest := strings.Repeat("5a", 32)
+	h := LMStudio(hostWithModels(t, "my-qwen"))
+	h.EngineObjects = []ModelObject{{Store: "jrn-chat", Object: "sha256:e7", Name: "my-qwen", Role: "model",
+		Engines: []ModelEngine{{Host: h.Name, Model: "my-qwen", Engine: "llamacpp"}}}}
+	r := New(h)
+	r.SetHeld([]HeldObject{
+		{Store: "jrn-chat", Names: []string{digest + ".gguf"}, Object: "sha256:e7", EntryCount: 1,
+			Descriptor: map[string]string{"family": digest, "format": "gguf", "architecture": "qwen35moe", "size_label": "35B-A3B"}},
+		// Another store's file under the served name's own spelling is not
+		// what the declaration names.
+		{Store: "other", Names: []string{"elsewhere/my-qwen.gguf"}, Object: "sha256:99", EntryCount: 1,
+			Descriptor: map[string]string{"family": "my-qwen-other"}},
+	})
+	r.Survey()
+	families, _ := r.Models(false)
+	f, ok := familyOf(families, digest)
+	if !ok {
+		t.Fatalf("families %+v", families)
+	}
+	if len(f.Names) != 1 || f.Names[0].Name != "my-qwen" || !f.Names[0].Servable || f.Names[0].Host == "" {
+		t.Fatalf("the served name is not the held file's: %+v", f)
+	}
+	if !slices.Equal(f.HeldIn, []string{"jrn-chat"}) || !slices.Equal(f.Names[0].HeldIn, []string{"jrn-chat"}) {
+		t.Fatalf("held_in %v, alias held_in %v", f.HeldIn, f.Names[0].HeldIn)
+	}
+	for _, other := range families {
+		for _, alias := range other.Names {
+			if other.Family != digest && alias.Servable {
+				t.Fatalf("the served name is also listed apart: %+v", families)
+			}
+		}
+	}
+	if d, _ := r.Route(Request{Model: "my-qwen"}); d.Family != digest || d.Verdict != WouldLoad {
+		t.Fatalf("decision %+v", d)
+	}
+	// Without the association the name is its own family again.
+	h.EngineObjects = nil
+	r.Survey()
+	families, _ = r.Models(false)
+	if f, ok := familyOf(families, digest); !ok || len(f.Names) != 1 || f.Names[0].Servable {
+		t.Fatalf("an undeclared name joined the file: %+v", families)
 	}
 }

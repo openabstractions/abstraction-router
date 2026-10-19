@@ -2,9 +2,11 @@ package router
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/openabstractions/abstraction-model/identity"
+	content "github.com/openabstractions/abstraction-storage/go/abstraction/storage/content"
 )
 
 // HeldObject is one thing a store holds, in that store's own words, as the
@@ -16,15 +18,37 @@ import (
 // nil for an object no store could name. Its "family" key is this machine's
 // model identity: the router reads it and invents none of its own.
 type HeldObject struct {
-	Store      string
-	Names      []string
-	Digest     string
+	Store  string
+	Names  []string
+	Digest string
+	// Evidence is the storage owner's evidence for Digest. Only Hashed
+	// permits a digest-only configured association; this router hashes nothing.
+	Evidence   content.Evidence
 	Descriptor map[string]string
+	// Object is an opaque source object ID, known only when the inventory
+	// identifies this entry itself. Manifest/Entry retain collection identity
+	// without asserting that the entire manifest is one content object.
+	Object     string
+	Manifest   string
+	Entry      int
+	EntryCount int
+	EntryRole  string
 }
 
 // family is what the store's descriptor calls this object, empty when the
 // store published no descriptor or a descriptor that names no family.
 func (o HeldObject) family() string { return o.Descriptor["family"] }
+
+// trained is the context the store's descriptor says the weights were
+// trained for (abstraction.model/descriptor@1 context_length), 0 when it
+// names none or names something other than a positive integer.
+func (o HeldObject) trained() int64 {
+	n, err := strconv.ParseInt(o.Descriptor["context_length"], 10, 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
 
 // role is the store's descriptor's role for this object, empty for a
 // descriptor that named none. componentRole is empty for a plain weights
@@ -92,6 +116,13 @@ type provenance struct {
 	// produces, lower-cased; a second, different name at the same key
 	// contests it (see declareName).
 	nameOwner map[string]string
+	// trained is, per declared family, the smallest context a store's
+	// descriptor says its weights were trained for (ROUTE-D8's maximum for
+	// an alias whose server reports none).
+	trained map[string]int64
+	// weights are the held weights objects a descriptor names a family for:
+	// what a host's configured object association (servedFamily) reaches.
+	weights []HeldObject
 }
 
 // source says whether a descriptor named this family or a program's name did.
@@ -146,6 +177,68 @@ func (p *provenance) familyOf(name string) (string, bool) {
 	return "", false
 }
 
+// servedFamily is the family of the held object h's own declaration says it
+// serves under name: the provider's configured association of that name with
+// a store object, by the store and object id, or by a digest the store
+// verified (sameModelObject). A model host serving a store's file under a
+// name the person chose, or under a name read from the file's header, is
+// that store's object whatever either name says. The stores holding it are
+// recorded for the family and the name. It answers false when the
+// declaration associates no weights object with name, or its objects carry
+// two families.
+func (p *provenance) servedFamily(h *Host, name string) (string, bool) {
+	if p == nil || h == nil || len(p.weights) == 0 {
+		return "", false
+	}
+	fam := ""
+	var holders []string
+	for _, fact := range h.EngineObjects {
+		if !weightsFact(fact) || !factServes(fact, name) {
+			continue
+		}
+		for _, o := range p.weights {
+			if !sameModelObject(fact, o) {
+				continue
+			}
+			if fam != "" && fam != o.family() {
+				return "", false
+			}
+			fam = o.family()
+			holders = append(holders, o.Store)
+		}
+	}
+	if fam == "" {
+		return "", false
+	}
+	for _, store := range holders {
+		add(p.byFamily, fam, store)
+		add(p.byName, strings.ToLower(name), store)
+	}
+	return fam, true
+}
+
+// weightsFact reports whether a configured association names the model's
+// weights: a recipe's "model" object, or one that names no role. A
+// projector, encoder or VAE a recipe also names is a companion, never the
+// model's identity.
+func weightsFact(fact ModelObject) bool {
+	return fact.Role == "" || fact.Role == "model" || fact.Role == roleWeights
+}
+
+// factServes reports whether a configured association is for the model the
+// host lists as name.
+func factServes(fact ModelObject, name string) bool {
+	if fact.Name != "" && strings.EqualFold(fact.Name, name) {
+		return true
+	}
+	for _, engine := range fact.Engines {
+		if strings.EqualFold(engine.Model, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func add(m map[string]map[string]bool, key, store string) {
 	if key == "" || store == "" {
 		return
@@ -193,7 +286,7 @@ func (p *provenance) declareName(key, name, store string) {
 func index(held []HeldObject) *provenance {
 	p := &provenance{byFamily: map[string]map[string]bool{}, byName: map[string]map[string]bool{},
 		spelling: map[string]string{}, declared: map[string]string{}, declaredByDigest: map[string]string{},
-		families: map[string]bool{}, components: map[string][]Component{}, nameOwner: map[string]string{}}
+		families: map[string]bool{}, components: map[string][]Component{}, nameOwner: map[string]string{}, trained: map[string]int64{}}
 	families := map[string][]string{}
 	for _, o := range held {
 		declared := o.family()
@@ -203,6 +296,10 @@ func index(held []HeldObject) *provenance {
 		}
 		if declared != "" {
 			p.families[declared] = true
+			p.weights = append(p.weights, o)
+			if n := o.trained(); n > 0 && (p.trained[declared] == 0 || n < p.trained[declared]) {
+				p.trained[declared] = n
+			}
 		}
 		p.declare(p.declaredByDigest, o.Digest, declared)
 		for _, name := range o.Names {
@@ -305,6 +402,11 @@ func (p *provenance) compose(families []Family) []Family {
 		families[i].Components = p.componentsFor(fam)
 		for j := range families[i].Names {
 			families[i].Names[j].HeldIn = stores(p.byName[strings.ToLower(families[i].Names[j].Name)])
+			// A server that reports no window for an alias leaves the
+			// weights' own trained context as the alias's maximum.
+			if a := &families[i].Names[j]; a.ContextLength == 0 && a.EffectiveContextLength == 0 {
+				a.ContextLength = p.trained[fam]
+			}
 		}
 	}
 	for fam, name := range p.spelling {

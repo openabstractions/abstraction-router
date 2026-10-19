@@ -4,6 +4,41 @@ Prior art, provenance, retired ids and what was measured or tested for
 [CONTRACT.md](CONTRACT.md), kept out of the contract itself per
 `research/vocabulary/DECISION.md` S7.
 
+2026-11-05: Retired the optional standalone Window because loopback TCP cannot meet this service's Identity listen.Program proof; the endpoint remains the supported route.
+
+## ObserveOffer, 2026-10-31
+
+Coordinator architectural disposition 2026-10-31 for 0.8.0 outcome F16 added
+`ObserveOffer` to router@1 (ROUTE-D11). Before it, the OpenCode plugin read
+`Offer` every 15 seconds per heading and forced a fresh survey when the
+latest was over 60 seconds old, and each read asked every paired runtime's
+`Offer` live: client polling with remote fan-out growing with the number of
+OpenCode instances. The composed runtime now surveys on its own one-minute
+clock (`serve/runtime_inference.go`, `routerSurveyEvery`), and `ObserveOffer`
+waits on those surveys with a digest cursor, modelled on facade registry@1
+`Observe`. One reading per request and survey serves every waiting caller.
+`go/observe_test.go` measures five waiters across one survey asking a paired
+runtime once. An added method is compatible under CONV-V1; `OfferObservation`
+is a new struct, and `idl/compat_published.py` passes against the published
+baselines.
+
+Review 13 the same day found the clock unordered against other surveys: a
+survey of the hosts before a removal could finish last and show the removed
+server again. Surveys now commit in the order they start and share one
+flight (ROUTE-D12). Hosted listings cost a credential audit entry each, about
+1,440 a day per key at one minute, enough to overwrite a 4,096-entry audit in
+under three days; the clock reads them every 15 minutes (96 a day) and backs
+off from failing paired runtimes. `ObserveOffer`'s age is measured when the
+answer is sent, so a caller can tell one survey from the next (ROUTE-D11).
+
+Review 16 found a failed hosted listing kept for the whole 15 minutes, so
+one provider error hid the person's models that long, and a stored key did
+not reach a listing already refused for want of it. A failed hosted listing
+now follows the same backoff as a failed paired runtime, storing a credential
+makes the clock read its host at the next tick, and `Offer` asks no paired
+runtime the clock is backing off from, so a sleeping computer is not dialled
+once a minute per watched request.
+
 ## Why the shape changed, 2026-09-23
 
 The page carried plain `ROUTE-1`..`ROUTE-24` ids with no letter grouping and
@@ -16,6 +51,12 @@ applied `research/reviews/router-2026-09-23.md`'s ten findings (F1–F10) in
 the same pass. The old numeric ids are retired; none is reused.
 
 ## Retired: the legacy JSON-over-socket protocol
+
+The 0.8 compatibility repair gates the remaining buildable line receiver through
+the shared rights owner. Its standalone factory establishes an account-local
+policy before listening. The receiver uses the retained native binding and the
+existing receive/disconnect lifetime, and refuses before survey, routing or audit
+work when authorization or its caller recheck fails. Removal remains planned.
 
 Before this pass, CONTRACT.md and README.md both still described `routerd`
 and the `router` CLI as a second, parallel protocol, even though the
@@ -201,6 +242,17 @@ missing if none is running. `go -C go test ./... -count=1` covers the
 generated protocol, the service and the client; see
 [CONTRACT.md](CONTRACT.md) "Not built" for what conformance does not yet
 cover.
+
+## 0.8.0 contract truth pass (W0-04), 2026-10-21
+
+Each changed or reviewed statement with its class: an outdated rule is text the code has passed, a code defect is code or IDL that breaks a rule and becomes a TODO row, an accepted divergence is recorded under Divergences, and an open decision is recorded under Divergences until its TODO row is decided.
+
+| statement | class | action |
+| --- | --- | --- |
+| Not built: C++ and Rust clients unproven | outdated rule | Windows proofs named; Python stays unproven |
+| `router.thrift` `profiles` lacks `live` | code defect | TODO row; stated under Not built |
+| ROUTE-A2 action and resource names against `RIGHTS.json` | accepted divergence | already the prose-wire table's interim until router@2; no change |
+| ROUTE-D2 and ROUTE-S4 against DREAM's multi-machine ranking | open decision | Divergences entry until the coordinator decides the remote ranking (TODO row) |
 
 ---
 

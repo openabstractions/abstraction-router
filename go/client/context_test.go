@@ -7,6 +7,7 @@ import (
 	identity "github.com/openabstractions/abstraction-identity"
 	"github.com/openabstractions/abstraction-identity/listen"
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
+	"github.com/openabstractions/abstraction-router/go/internal/personfolders"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -50,11 +51,18 @@ func TestContextMethodsRefuseExpiredWait(t *testing.T) {
 
 type contextProvider struct{}
 
+func (contextProvider) Modalities(string, int64) (wire.ModalityPage, error) {
+	return wire.ModalityPage{Outcome: wire.ModalityOutcomePage, Complete: true}, nil
+}
+
 func (contextProvider) Models(bool) (wire.ModelsSnapshot, error)       { return wire.ModelsSnapshot{}, nil }
 func (contextProvider) Hosts(bool) (wire.HostsSnapshot, error)         { return wire.HostsSnapshot{}, nil }
 func (contextProvider) Pick(wire.PickRequest) (wire.PickResult, error) { return wire.PickResult{}, nil }
 func (contextProvider) Offer(wire.OfferRequest) (wire.OfferSnapshot, error) {
 	return wire.OfferSnapshot{Outcome: wire.OfferOutcomeOffered}, nil
+}
+func (contextProvider) ObserveOffer(wire.OfferRequest, string, int64) (wire.OfferObservation, error) {
+	return wire.OfferObservation{Outcome: wire.OfferOutcomeOffered}, nil
 }
 func TestContextCancellationDuringCallAndDefaultReuse(t *testing.T) {
 	dir, err := os.MkdirTemp("", "oa-ctx-")
@@ -136,3 +144,6 @@ func TestContextCancellationDuringCallAndDefaultReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestMain confines per-user folders to the canonical owned test fixture.
+func TestMain(m *testing.M) { os.Exit(personfolders.Main(m)) }

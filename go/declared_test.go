@@ -109,8 +109,7 @@ func TestAMissingRecordYieldsTheDefault(t *testing.T) {
 		t.Fatalf("absent records logged %v", f.logged)
 	}
 	// A machine whose products recorded nothing declares no host: the
-	// documented defaults are installation declarations, not a compiled-in
-	// list the router carries.
+	// documented defaults provide no installation evidence.
 	if hosts := Declared(f.probeEnv("linux")); len(hosts) != 0 {
 		t.Fatalf("declared hosts without a record %+v", hosts)
 	}
@@ -123,13 +122,14 @@ func TestAMissingRecordYieldsTheDefault(t *testing.T) {
 	if strings.Join(names, " ") != "lmstudio=http://127.0.0.1:4321/lmstudio ollama=http://127.0.0.1:9999/ollama" {
 		t.Fatalf("declared hosts %v", names)
 	}
-	// Installed stays the source of the four default declarations.
-	var installed []string
-	for _, h := range Installed() {
-		installed = append(installed, h.Name+"="+h.Base)
+	// Default endpoint knowledge cannot create an installed host.
+	if hosts := Installed(); len(hosts) != 0 {
+		t.Fatalf("implicit installed hosts %+v", hosts)
 	}
-	if strings.Join(installed, " ") != "lemonade=http://127.0.0.1:13305 lmstudio=http://127.0.0.1:1234 ollama=http://127.0.0.1:11434 comfyui=http://127.0.0.1:8188" {
-		t.Fatalf("installed defaults %v", installed)
+	// A product record is transient input; removing it leaves no registration.
+	f.env, f.files = nil, nil
+	if hosts := Declared(f.probeEnv("linux")); len(hosts) != 0 {
+		t.Fatalf("product hosts survived record removal %+v", hosts)
 	}
 }
 
@@ -204,7 +204,7 @@ func TestHostsCarryDeclaredBy(t *testing.T) {
 	if len(states) != 1 || states[0].DeclaredBy != DeclaredByDockerModelRunner || !states[0].Up || states[0].Installed != 1 {
 		t.Fatalf("states %+v", states)
 	}
-	if d, _ := r.Route(Request{Model: "ai/smollm2"}); d.Verdict != WouldLoad || d.Endpoint != base+"/engines/v1/chat/completions" {
+	if d, _ := r.Route(Request{Model: "ai/smollm2"}); d.Verdict != WouldLoad || d.Endpoint != "" {
 		t.Fatalf("route %+v", d)
 	}
 }

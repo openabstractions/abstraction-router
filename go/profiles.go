@@ -10,6 +10,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
 )
 
 // Profiles a host serves, the seed of abstraction.inference host_profiles. A
@@ -28,10 +30,10 @@ const (
 )
 
 // SeedProfiles is every seeded profile, in catalogue order.
-var SeedProfiles = []string{ProfileChat, ProfileEmbed, ProfileTranscription, ProfileSpeech, ProfileImage, ProfileLive}
+var SeedProfiles = slices.Clone(wire.Profiles)
 
-// DefaultProfiles is what a host serves when it declares none: every seeded
-// profile on the OpenAI-compatible wire, which the local runtimes speak, chat
+// DefaultProfiles is what a host serves when it declares none: the five ordinary
+// profiles on the OpenAI-compatible wire, which the local runtimes speak, chat
 // on any other wire, and nothing for a host with no chat endpoint.
 func DefaultProfiles(h *Host) []string {
 	switch {
@@ -164,7 +166,7 @@ func postContext(ctx context.Context, url string, body, into any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := localReadClient(ctx).Do(req)
 	if err != nil {
 		return err
 	}

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/openabstractions/abstraction-identity/listen"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -99,34 +98,5 @@ func TestServiceRefusalHasCode(t *testing.T) {
 	out = r.Answer(Request{Op: OpRoute}, listen.Seen{})
 	if out.Code != CodeCallerRefused || out.Error == "" {
 		t.Fatalf("unbound caller: %+v", out)
-	}
-}
-
-func TestWindowRefusalStatus(t *testing.T) {
-	l, err := Window("127.0.0.1:0", &Router{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	for _, tc := range []struct {
-		path, code string
-		status     int
-	}{
-		{"/route", CodeCallerRefused, http.StatusForbidden},
-		{"/unknown", CodeUnknownOperation, http.StatusBadRequest},
-	} {
-		resp, err := http.Get("http://" + l.Addr().String() + tc.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var out Response
-		err = json.NewDecoder(resp.Body).Decode(&out)
-		resp.Body.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != tc.status || out.Code != tc.code || out.Error == "" {
-			t.Fatalf("%s: status %d, response %+v", tc.path, resp.StatusCode, out)
-		}
 	}
 }

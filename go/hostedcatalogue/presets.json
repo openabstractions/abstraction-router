@@ -1,0 +1,79 @@
+{
+  "presets": [
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "api": "openai-compatible",
+      "base": "https://api.deepseek.com/v1",
+      "credential": "deepseek",
+      "budget": "tokens",
+      "reports_tokens": true,
+      "reports_cost": false,
+      "key_page": "https://platform.deepseek.com/api_keys",
+      "key_format": "opaque",
+      "default_budget": 0,
+      "sign_in": false,
+      "profiles": ["chat"],
+      "model_context": 1048576,
+      "model_context_source": "DeepSeek API reference, GET /models context_window for deepseek-flash and deepseek-v4-pro, read 2026-11-08",
+      "models_source": "DeepSeek API docs read 2026-11-12: api-docs.deepseek.com/quick_start/pricing (image input on deepseek-flash only; JSON output is json_object, no schema), /api/create-chat-completion (reasoning_effort none, low, high, max; medium reads as high; default high; no reasoning budget), /guides/thinking_mode",
+      "models": {
+        "deepseek-flash": {
+          "input": ["text", "image"],
+          "output": ["text"],
+          "tools": true,
+          "structured_output": false,
+          "reasoning": {"parameter": "reasoning_effort", "values": {"none": "none", "low": "low", "medium": "high", "high": "high"}, "default": "high"},
+          "extensions": ["openai/reasoning_effort"]
+        },
+        "deepseek-v4-pro": {
+          "input": ["text"],
+          "output": ["text"],
+          "tools": true,
+          "structured_output": false,
+          "reasoning": {"parameter": "reasoning_effort", "values": {"none": "none", "low": "low", "medium": "high", "high": "high"}, "default": "high"},
+          "extensions": ["openai/reasoning_effort"]
+        }
+      }
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "api": "openai-compatible",
+      "base": "https://openrouter.ai/api/v1",
+      "credential": "openrouter",
+      "budget": "money",
+      "reports_tokens": true,
+      "reports_cost": true,
+      "key_page": "https://openrouter.ai/settings/keys",
+      "key_format": "opaque",
+      "default_budget": 0,
+      "sign_in": false
+    },
+    {
+      "id": "github-download",
+      "label": "GitHub private downloads",
+      "kind": "download",
+      "api": "",
+      "base": "https://api.github.com",
+      "credential": "github-download",
+      "budget": "",
+      "key_page": "https://github.com/settings/tokens",
+      "key_format": "opaque",
+      "default_budget": 0,
+      "sign_in": false
+    },
+    {
+      "id": "openai-compatible",
+      "label": "Another OpenAI-compatible service",
+      "api": "openai-compatible",
+      "base": "",
+      "credential": "",
+      "budget": "tokens",
+      "key_page": "",
+      "key_format": "opaque",
+      "default_budget": 0,
+      "sign_in": false
+    }
+  ]
+}

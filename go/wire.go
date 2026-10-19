@@ -5,13 +5,22 @@ import (
 
 	identity "github.com/openabstractions/abstraction-identity"
 	"github.com/openabstractions/abstraction-identity/listen"
+	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
 )
 
+// GuaranteeProviderSetup names native provider-pair admission and guarded
+// atomic completion, with own-caller credential/binding readiness projection.
+const GuaranteeProviderSetup = "abstraction.router/provider-setup@1"
+
 const (
-	OpModels    = "models"
-	OpResidency = "residency"
-	OpRoute     = "route"
-	OpOffer     = "offer"
+	OpModels     = "models"
+	OpResidency  = "residency"
+	OpRoute      = "route"
+	OpOffer      = "offer"
+	OpModalities = "modalities"
+	// OpObserveOffer is router@1 ObserveOffer (observe.go). It is answered
+	// and gated as Offer is; the earlier line protocol does not serve it.
+	OpObserveOffer = "observe_offer"
 )
 
 // Bound is what this service requires of a caller before it will answer for it.
@@ -24,9 +33,11 @@ var Bound = identity.Need{
 }
 
 type Request struct {
-	Op    string `json:"op"`
-	Model string `json:"model,omitempty"`
-	Fresh bool   `json:"fresh,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int64  `json:"limit,omitempty"`
+	Op     string `json:"op"`
+	Model  string `json:"model,omitempty"`
+	Fresh  bool   `json:"fresh,omitempty"`
 	// Hosts is the set of hosts this request authorises to serve it. The key
 	// absent means every servable host; an empty list means none, and refuses.
 	// The pointer is what keeps those two apart: a plain slice reads an empty
@@ -40,24 +51,31 @@ type Request struct {
 	// PlacementHosted or PlacementAny. Only OpOffer reads it.
 	Placement string `json:"placement,omitempty"`
 	// Reserve is the output budget in tokens an offer's caller keeps for the
-	// answer. Only OpOffer reads it.
+	// answer. Only OpOffer and OpObserveOffer read it.
 	Reserve int64 `json:"reserve,omitempty"`
+	// Wait is how long OpObserveOffer waits for its answer to differ from
+	// Cursor; the line protocol never carries it.
+	Wait time.Duration `json:"-"`
 }
 
 type Response struct {
-	Code       string      `json:"code,omitempty"`
-	Error      string      `json:"error,omitempty"`
-	Caller     listen.Seen `json:"caller"`
-	TookMS     int64       `json:"took_ms"`
-	AgeMS      int64       `json:"cache_age_ms"`
-	Models     []Family    `json:"models,omitempty"`
-	Hosts      []HostState `json:"hosts,omitempty"`
-	Holders    []Holder    `json:"holders,omitempty"`
-	HoldersWhy string      `json:"holders_unreadable,omitempty"`
-	Doubled    []string    `json:"doubled,omitempty"`
-	Asked      []Ask       `json:"asked,omitempty"`
-	Decision   *Decision   `json:"decision,omitempty"`
-	Offers     []Offer     `json:"offers,omitempty"`
+	ModalityPage *ModalityPage `json:"modality_page,omitempty"`
+	Code         string        `json:"code,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	Caller       listen.Seen   `json:"caller"`
+	TookMS       int64         `json:"took_ms"`
+	AgeMS        int64         `json:"cache_age_ms"`
+	Models       []Family      `json:"models,omitempty"`
+	Hosts        []HostState   `json:"hosts,omitempty"`
+	Holders      []Holder      `json:"holders,omitempty"`
+	HoldersWhy   string        `json:"holders_unreadable,omitempty"`
+	Doubled      []string      `json:"doubled,omitempty"`
+	Asked        []Ask         `json:"asked,omitempty"`
+	Decision     *Decision     `json:"decision,omitempty"`
+	Offers       []Offer       `json:"offers,omitempty"`
+	// Cursor is OpObserveOffer's digest of Offers; the line protocol never
+	// carries it.
+	Cursor string `json:"-"`
 }
 
 // Offer is one family a caller may ask for a profile (ROUTE-D8): the name to
@@ -79,6 +97,8 @@ type Offer struct {
 	// Unknown names each counted alias whose server fixes its window at load
 	// and reported no valid request limit, as <server>/<name>.
 	Unknown []string `json:"unknown,omitempty"`
+	// Title is the family's display name, as on Family.
+	Title string `json:"title,omitempty"`
 }
 
 // Placements an offer request names.
@@ -116,7 +136,15 @@ type Family struct {
 	// component never appears as a family of its own; this is where it shows
 	// up instead.
 	Components []Component `json:"components,omitempty"`
+	// Title is the model catalogue's display name for the family, empty when
+	// none is known. It is shown to people and never asked for.
+	Title   string        `json:"title,omitempty"`
+	Objects []ModelObject `json:"objects,omitempty"`
 }
+
+type Engine = wire.Engine
+type ModelEngine = wire.ModelEngine
+type ModelObject = wire.ModelObject
 
 // Component is one role-bearing object a store holds, folded into a
 // family's detail rather than listed as a family of its own.
@@ -157,6 +185,9 @@ type Alias struct {
 	// EffectiveContextLength is the host-reported request limit: the loaded
 	// value when resident or configured value otherwise. Zero means unknown.
 	EffectiveContextLength int64 `json:"effective_context_length,omitempty"`
+	// Capabilities is what this alias takes and gives on its host
+	// (capabilities.go); nil when no source states anything.
+	Capabilities *ModelCapabilities `json:"capabilities,omitempty"`
 }
 
 // HostState names a hosted host's wire and credential name; it never carries a
@@ -176,6 +207,7 @@ type HostState struct {
 	Profiles          []string          `json:"profiles,omitempty"`
 	Domain            string            `json:"domain,omitempty"`
 	AvailabilityCause AvailabilityCause `json:"availability_cause,omitempty"`
+	Engines           []Engine          `json:"engines,omitempty"`
 }
 
 // AvailabilityCause classifies a failed listing observation without interpreting
@@ -231,11 +263,13 @@ const (
 )
 
 type Decision struct {
-	Asked       string    `json:"asked"`
-	Family      string    `json:"family"`
-	Verdict     string    `json:"verdict"`
-	Host        string    `json:"host,omitempty"`
-	Model       string    `json:"model,omitempty"`
+	Asked   string `json:"asked"`
+	Family  string `json:"family"`
+	Verdict string `json:"verdict"`
+	Host    string `json:"host,omitempty"`
+	Model   string `json:"model,omitempty"`
+	// Endpoint is always empty: a decision names its server, and the service
+	// sends to it (router P0-1). router@2 drops the field.
 	Endpoint    string    `json:"endpoint,omitempty"`
 	InstalledOn []string  `json:"installed_on,omitempty"`
 	Authorised  *[]string `json:"authorised,omitempty"`

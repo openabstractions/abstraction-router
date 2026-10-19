@@ -51,3 +51,7 @@ func causeOf(err error) AvailabilityCause {
 	}
 	return AvailabilityUnknown
 }
+
+// ListingCause returns the existing listing availability projection for an
+// error, including wrapped causes. It preserves unknown causes as unknown.
+func ListingCause(err error) AvailabilityCause { return causeOf(err) }

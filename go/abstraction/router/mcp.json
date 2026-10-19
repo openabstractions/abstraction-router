@@ -1,0 +1,46 @@
+{
+  "methods": [
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "Modalities",
+      "trait": "readonly"
+    },
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "Models",
+      "trait": "readonly"
+    },
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "Hosts",
+      "trait": "readonly"
+    },
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "Pick",
+      "trait": "readonly"
+    },
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "Offer",
+      "trait": "readonly"
+    },
+    {
+      "class": "read",
+      "contract": "abstraction.router/router@1",
+      "idempotency_key": "",
+      "method": "ObserveOffer",
+      "trait": "readonly"
+    }
+  ]
+}

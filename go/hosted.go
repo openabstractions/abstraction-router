@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/openabstractions/abstraction-router/go/hostedcatalogue"
 )
 
 // Wire kinds a hosted host speaks, the seed of router.thrift wire_kinds.
@@ -182,6 +184,10 @@ func listArrayIDs(ctx context.Context, address string, headers map[string]string
 }
 
 func listIDs(ctx context.Context, address string, headers map[string]string) ([]string, error) {
+	return listIDsWithClient(ctx, address, headers, hostedRequestClient(headers))
+}
+
+func listIDsWithClient(ctx context.Context, address string, headers map[string]string, client *http.Client) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
@@ -189,7 +195,8 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := hostedRequestClient(headers).Do(req)
+	defer clear(req.Header)
+	resp, err := client.Do(req)
 	if err != nil {
 		// The URL error names the address only; headers never enter an error.
 		return nil, failedListing(causeOf(err), fmt.Errorf("listing %s: unreachable", address))
@@ -199,26 +206,140 @@ func listIDs(ctx context.Context, address string, headers map[string]string) ([]
 		return nil, failedListing(statusCause(resp.StatusCode), fmt.Errorf("listing %s: %s", address, resp.Status))
 	}
 	var d struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+		Data []listedModel `json:"data"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&d); err != nil || d.Data == nil {
 		return nil, failedListing(AvailabilityMalformed, fmt.Errorf("listing %s: unreadable", address))
 	}
+	seen, _ := ctx.Value(listedMetadataKey{}).(*listedMetadata)
 	out := make([]string, 0, len(d.Data))
 	for _, m := range d.Data {
 		if m.ID != "" {
 			out = append(out, m.ID)
+			seen.note(m)
 		}
 	}
 	return out, nil
 }
 
-// readHosted lists one hosted host, applying its credential for this request.
-func (r *Router) readHosted(ctx context.Context, h *Host) (installed []string, why string, cause AvailabilityCause) {
+// listedModel is one entry of an OpenAI-compatible GET /models listing with
+// the optional metadata providers add: the context window (DeepSeek and Groq
+// context_window, OpenRouter context_length, vLLM max_model_len) and the
+// generated media (DeepSeek output_modalities).
+type listedModel struct {
+	ID               string          `json:"id"`
+	ContextWindow    json.RawMessage `json:"context_window"`
+	ContextLength    json.RawMessage `json:"context_length"`
+	MaxModelLen      json.RawMessage `json:"max_model_len"`
+	OutputModalities []string        `json:"output_modalities"`
+	InputModalities  []string        `json:"input_modalities"`
+	Architecture     *struct {
+		InputModalities  []string `json:"input_modalities"`
+		OutputModalities []string `json:"output_modalities"`
+	} `json:"architecture"`
+	SupportedParameters []string `json:"supported_parameters"`
+}
+
+func (m listedModel) context() int64 {
+	for _, raw := range []json.RawMessage{m.ContextWindow, m.ContextLength, m.MaxModelLen} {
+		if n := positiveJSONInteger(raw); n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// profiles reads the profiles a model's reported output media serve, or nil
+// when the provider reports none: text is chat, image is image and audio is
+// speech.
+func (m listedModel) profiles() []string {
+	if len(m.OutputModalities) == 0 {
+		return nil
+	}
+	out := []string{}
+	for _, media := range m.OutputModalities {
+		var profile string
+		switch media {
+		case "text":
+			profile = ProfileChat
+		case "image":
+			profile = ProfileImage
+		case "audio":
+			profile = ProfileSpeech
+		}
+		if profile != "" && !has(out, profile) {
+			out = append(out, profile)
+		}
+	}
+	return out
+}
+
+// listedMetadata collects what one hosted listing reported about its models.
+type listedMetadata struct {
+	contexts     map[string]modelContext
+	profiles     map[string][]string
+	capabilities map[string]*ModelCapabilities
+}
+
+type listedMetadataKey struct{}
+
+func (l *listedMetadata) note(m listedModel) {
+	if l == nil {
+		return
+	}
+	if n := m.context(); n > 0 {
+		l.contexts[m.ID] = modelContext{maximum: n}
+	}
+	if p := m.profiles(); p != nil {
+		l.profiles[m.ID] = p
+	}
+	if c := m.capabilities(); c != nil {
+		if l.capabilities == nil {
+			l.capabilities = map[string]*ModelCapabilities{}
+		}
+		l.capabilities[m.ID] = c
+	}
+}
+
+// hostedMetadata is what a hosted listing reported, completed from the
+// hosted catalogue: a provider's documented context window for each model
+// whose listing named none (architect ruling D(a), 2026-11-08). Profiles a
+// model reports are kept within the host's own.
+func hostedMetadata(h *Host, installed []string, listed *listedMetadata) (map[string]modelContext, map[string][]string) {
+	contexts, profiles := map[string]modelContext{}, map[string][]string{}
+	fallback := catalogueContext(h.Base, h.Wire)
+	for _, name := range installed {
+		if c, ok := listed.contexts[name]; ok {
+			contexts[name] = c
+		} else if fallback > 0 {
+			contexts[name] = modelContext{maximum: fallback}
+		}
+		if reported, ok := listed.profiles[name]; ok {
+			kept := []string{}
+			for _, p := range reported {
+				if has(h.HostProfiles(), p) {
+					kept = append(kept, p)
+				}
+			}
+			profiles[name] = kept
+		}
+	}
+	return contexts, profiles
+}
+
+// catalogueContext is the documented context window of the hosted preset
+// whose address and wire base and wire are, or 0.
+func catalogueContext(base, wire string) int64 {
+	p, _ := hostedcatalogue.PresetFor(base, wire)
+	return p.ModelContext
+}
+
+// readHosted lists one hosted host, applying its credential for this request,
+// with the metadata its listing reported (listedMetadata).
+func (r *Router) readHosted(ctx context.Context, h *Host) (installed []string, listed *listedMetadata, why string, cause AvailabilityCause) {
+	listed = &listedMetadata{contexts: map[string]modelContext{}, profiles: map[string][]string{}}
 	if h.listing == nil {
-		return nil, "unsupported_wire:" + h.Wire, AvailabilityConfiguration
+		return nil, listed, "unsupported_wire:" + h.Wire, AvailabilityConfiguration
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -227,17 +348,17 @@ func (r *Router) readHosted(ctx context.Context, h *Host) (installed []string, w
 	if h.Credential != "" && h.remote == nil {
 		apply := r.applier()
 		if apply == nil {
-			return nil, "credential:unavailable:" + h.Credential, AvailabilityCredential
+			return nil, listed, "credential:unavailable:" + h.Credential, AvailabilityCredential
 		}
 		var err error
 		if headers, err = apply(ctx, CredentialConsumer, h.Credential, Target(h.Base)); err != nil {
-			return nil, CredentialReason(h.Credential, err), AvailabilityCredential
+			return nil, listed, CredentialReason(h.Credential, err), AvailabilityCredential
 		}
 	}
-	installed, err := h.listing(ctx, h, headers)
+	installed, err := h.listing(context.WithValue(ctx, listedMetadataKey{}, listed), h, headers)
 	clear(headers)
 	if err != nil {
-		return nil, err.Error(), causeOf(err)
+		return nil, listed, err.Error(), causeOf(err)
 	}
-	return installed, "", ""
+	return installed, listed, "", ""
 }

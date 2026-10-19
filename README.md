@@ -20,20 +20,23 @@ application loaded can serve the next.
     for a profile, which families an application can be offered
 
 Applications resolve `abstraction.router/router@1` through the facade.
-`Models`, `Hosts`, `Pick` and `Offer` return bounded typed results.
-`Offer` returns an `outcome`: `offered` carries the model offers; `invalid`,
+`Models`, `Hosts`, `Pick`, `Offer` and `ObserveOffer` return bounded typed results.
+[`Offer`](https://openabstractions.github.io/reference.html#concept-router.offer) returns an `outcome`: `offered` carries the model offers; `invalid`,
 `unavailable`, `forbidden` and `not_permitted` carry no offers. Check that
 outcome before using the inventory (CONTRACT.md ROUTE-E3).
 `Offer` lists, for a profile, a placement and the answer reserve the
-caller keeps, each family it can ask for with one name and the
+caller keeps, each [family](https://openabstractions.github.io/reference.html#concept-model.family-identity) it can ask for with one name and the
 conservative context window: the smallest bound
 across the family's servers, and `unknown` when a server that fixes its
-window at load reported none. Inventory and
+window at load reported none. `ObserveOffer` answers the same offers with a
+cursor once they differ from the cursor a caller gives, or after at most 30
+seconds, and decides what `Offer` decides; one reading per survey serves every
+waiting caller (CONTRACT.md ROUTE-D11). Inventory and
 route selection have separate rights: `Models`, `Hosts` and `Offer` decide
-`abstraction.router/inventory.read`, and `Pick` decides
-`abstraction.router/route.pick`; both apply to resource `account`
-(`abstraction.router/inventory` and `abstraction.router/routes` today —
-[CONTRACT.md](CONTRACT.md)'s prose-to-wire table names the release).
+`abstraction.router/inventory.read` on resource `abstraction.router/inventory`,
+and `Pick` decides `abstraction.router/route` on `abstraction.router/routes`
+([CONTRACT.md](CONTRACT.md) ROUTE-A2; its prose-to-wire table names the release
+of the final words).
 `rights grant --for inference` grants both, alongside the per-server
 `complete` rule. A `would_load` outcome names a candidate server; the
 router does not load, unload or evict a model.
@@ -50,7 +53,7 @@ is a router.
 
 ## The router-v1 protocol
 
-The Go and C++ clients expose `Models`, `Hosts`, `Pick` and `Offer` through
+The Go and C++ clients expose `Models`, `Hosts`, `Pick`, `Offer` and `ObserveOffer` through
 generated [Thrift bindings](router.thrift) and the shared IPC runtime;
 this is the protocol the installed runtime serves for
 `abstraction.router/router@1`. They contain no model-server discovery
@@ -70,7 +73,10 @@ openabstractions serve router-v1
 host; the host also accepts `--endpoint`. The default is the shared
 `router-v1` listen address convention, distinct from the retired `router`
 one. This foreground command does not register an OS service. The
-provider remains in the user's session.
+provider remains in the user's session. The standalone host answers
+callers under its own account only and refuses every other caller as
+`forbidden`; the installed runtime decides each caller through the rights
+service.
 
 `go/wire.go`'s `Alias`, `Family`, `HostState`, `Ask` and `Decision` keep
 their own types and `json` tags for the legacy JSON-over-socket protocol;
@@ -163,8 +169,7 @@ applied through `abstraction.credentials/applier@1`, as consumer
   performs the call, and no endpoint or key reaches the caller.
 
 ```go
-r := router.New(append(router.Installed(),
-	router.NewHosted("openrouter", "https://openrouter.ai/api/v1", router.WireOpenAICompatible, "openrouter"))...)
+r := router.New(router.NewHosted("openrouter", "https://openrouter.ai/api/v1", router.WireOpenAICompatible, "openrouter"))
 r.UseCredentials(apply) // the runtime's in-process applier
 ```
 
@@ -273,7 +278,7 @@ Divergences entry.
 
 ## Where the weights are
 
-A `Family` and each of its `Alias` names carry `held_in`: the storage
+A [`Family`](https://openabstractions.github.io/reference.html#concept-router.family-catalogue) and each of its [`Alias`](https://openabstractions.github.io/reference.html#concept-router.alias) names carry `held_in`: the storage
 inventory stores holding an object that name matches, in store order. A
 server's model matches a store's object by the one matching function
 above, or by the digest a store published for its own unnamed object; no
@@ -324,7 +329,7 @@ message; `Response.Err()` applies the same rule to a decoded reply. The
 [code constants](go/errors.go) define the vocabulary. Diagnostic wording
 is not an API.
 
-Caller `user_description` and `path_description` contain server-observed
+[Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description) `user_description` and `path_description` contain server-observed
 diagnostic text, including proof decorations. They are not stable
 principal identifiers, filesystem paths, or authorization evidence. The
 audit entries likewise contain diagnostic caller descriptions.
@@ -335,6 +340,13 @@ The legacy JSON-over-socket protocol — `routerd` and the `router`
 CLI — is retired: the installed runtime does not run it, and its binaries
 remain buildable only for manual, offline inspection
 ([HISTORY.md](HISTORY.md) carries its full account).
+
+Its buildable standalone receiver establishes the same account-local rights
+gate as the modern standalone service. Models and Residency require inventory
+read, as does Offer; Route requires routing permission. Every request rechecks its
+retained native caller before the decision and before provider work. Policy
+failure refuses the request. The line framing and public Start signature remain
+compatible while the planned protocol removal is pending.
 
 `Offer`'s conservative context window is [CONTRACT.md](CONTRACT.md) ROUTE-D8.
 
@@ -348,7 +360,7 @@ This reference records compiled receiving support; RIGHTS.json names the compila
 
 | Action | Resource profile | Owning operations | First-use targets | Compiled receiver |
 |---|---|---|---|---|
-| `abstraction.router/inventory.read` | `abstraction.rights/legacy-exact-string@1` | `abstraction.router/router@1#Models`, `abstraction.router/router@1#Hosts`, `abstraction.router/router@1#Offer` | Legacy `exact` | served in compiled context |
+| `abstraction.router/inventory.read` | `abstraction.rights/legacy-exact-string@1` | `abstraction.router/router@1#Models`, `abstraction.router/router@1#Hosts`, `abstraction.router/router@1#Offer`, `abstraction.router/router@1#ObserveOffer`, `abstraction.model/catalog@1#Fit` | Legacy `exact` | served in compiled context |
 | `abstraction.router/route` | `abstraction.rights/legacy-exact-string@1` | `abstraction.router/router@1#Pick` | `none` | served in compiled context |
 
 <!-- END GENERATED PERMISSION DEFINITIONS -->

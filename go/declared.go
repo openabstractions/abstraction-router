@@ -359,8 +359,7 @@ func Probe(env ProbeEnv) []Declaration {
 // Declared is the hosts whose own record on this machine says where they
 // listen, in preference order: LM Studio, Ollama, Docker Model Runner and
 // Foundry Local. A product that recorded nothing declares nothing here; its
-// documented default address is an installation declaration in the runtime's
-// registry, which Installed() is the source of.
+// documented default address alone creates no registration.
 func Declared(env ProbeEnv) []*Host {
 	var hosts []*Host
 	for _, d := range Probe(env) {

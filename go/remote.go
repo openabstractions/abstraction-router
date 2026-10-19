@@ -3,7 +3,7 @@ package router
 import (
 	"context"
 	"crypto/tls"
-	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -42,19 +42,22 @@ type remoteLink struct {
 	// listing, the union across the remote's own aliases of that name. A name
 	// one of whose aliases reports no profiles is absent: it is judged by the
 	// profiles this runtime declared for the remote.
-	profiles map[string][]string
+	profiles      map[string][]string
+	objects       map[string][]ModelObject
+	objectAliases map[string][]string
 }
 
 // NewRemote is a remote runtime under explicit trust: address is host:port,
 // config carries the trusted roots, server name and this runtime's client
 // certificate. credential names the credential the remote applies to the
 // requests it performs for this runtime; it is never applied or carried here.
+// admit checks the verified leaf key against the registration's live trust.
 // The remote's router@1 Models and Hosts are read through the transport, and
 // its hosts are listed as <name>/<host> in its domain. Its aliases carry the
 // context the remote reports for them, and an offer asks the remote's own
 // router@1 Offer (ROUTE-S4).
-func NewRemote(name, address string, config *tls.Config, credential string) (*Host, error) {
-	transport, err := remote.Client(address, config, 30*time.Second, remoteFrameBytes)
+func NewRemote(name, address string, config *tls.Config, credential string, admit func(remote.Peer) error) (*Host, error) {
+	transport, err := remote.Client(address, config, 30*time.Second, remoteFrameBytes, admit)
 	if err != nil {
 		return nil, err
 	}
@@ -73,14 +76,33 @@ func remoteHost(name, address, credential string, client func(context.Context) r
 	h.listing = func(ctx context.Context, h *Host, _ map[string]string) ([]string, error) {
 		models, err := h.remote.client(ctx).Models(false)
 		if err != nil {
-			return nil, errors.New("remote " + address + ": " + err.Error())
+			h.remote.mu.Lock()
+			h.remote.objects = nil
+			h.remote.objectAliases = nil
+			h.remote.mu.Unlock()
+			return nil, fmt.Errorf("remote %s: %w", address, err)
 		}
 		var out []string
 		contexts := map[string]modelContext{}
 		profiles := map[string][]string{}
 		unreported := map[string]bool{}
+		objects := map[string][]ModelObject{}
+		objectAliases := map[string][]string{}
 		for _, f := range models.Models {
+			for _, object := range f.Objects {
+				if object.Domain == "" {
+					object.Domain = h.Name
+				} else {
+					object.Domain = h.Name + "/" + object.Domain
+				}
+				object.Engines = slices.Clone(object.Engines)
+				for i := range object.Engines {
+					object.Engines[i].Host = h.Name + "/" + object.Engines[i].Host
+				}
+				objects[f.Family] = append(objects[f.Family], object)
+			}
 			for _, a := range f.Names {
+				objectAliases[f.Family] = append(objectAliases[f.Family], a.Name)
 				if !a.Servable {
 					continue
 				}
@@ -107,6 +129,8 @@ func remoteHost(name, address, credential string, client func(context.Context) r
 		h.remote.mu.Lock()
 		h.remote.contexts = contexts
 		h.remote.profiles = profiles
+		h.remote.objects = objects
+		h.remote.objectAliases = objectAliases
 		h.remote.mu.Unlock()
 		return out, nil
 	}
@@ -185,7 +209,7 @@ func (h *Host) remoteHosts(ctx context.Context) ([]HostState, error) {
 			cause = AvailabilityCause(*s.AvailabilityCause)
 		}
 		out = append(out, HostState{Host: h.Name + "/" + s.Host, Base: s.Base, Up: s.Up, Why: s.Why, Installed: int(s.Installed), Resident: s.Resident,
-			Servable: s.Servable, Hosted: s.Hosted, Wire: s.Wire, Credential: s.Credential, DeclaredBy: s.DeclaredBy, Profiles: s.Profiles, Domain: h.Name, AvailabilityCause: cause})
+			Servable: s.Servable, Hosted: s.Hosted, Wire: s.Wire, Credential: s.Credential, DeclaredBy: s.DeclaredBy, Profiles: s.Profiles, Domain: h.Name, AvailabilityCause: cause, Engines: s.Engines})
 	}
 	return out, nil
 }

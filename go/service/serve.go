@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/openabstractions/abstraction-rights/go/authorization/gate"
 	router "github.com/openabstractions/abstraction-router/go"
 	"github.com/openabstractions/abstraction-router/go/client"
 	"io"
@@ -16,6 +17,8 @@ import (
 const routerV1Usage = `Usage: openabstractions serve router-v1 [options]
 
 Answers model discovery and routing requests over the framed service.
+Answers callers under this account only and refuses the rest as forbidden;
+the installed runtime decides each caller through the rights service.
 
   --endpoint EP   framed router endpoint (default: the installed runtime's
                   pipe for this service)
@@ -64,12 +67,16 @@ func Serve(args []string) error {
 		fmt.Fprint(os.Stderr, routerV1Usage)
 		return fmt.Errorf("%w: router-v1: survey duration must be positive", ErrUsage)
 	}
-	r := router.New(router.Installed()...)
+	// Standalone has no registry/product source; the composed runtime supplies hosts.
+	r := router.New()
 	h, err := Listen(*endpoint, r)
 	if err != nil {
 		return err
 	}
 	defer h.Close()
+	if err := enableLocalGate(h); err != nil {
+		return err
+	}
 	r.Survey()
 	stop := make(chan struct{})
 	defer close(stop)
@@ -79,4 +86,15 @@ func Serve(args []string) error {
 	h.OnError = func(err error) { fmt.Fprintln(os.Stderr, "router-v1:", err) }
 	fmt.Fprintln(os.Stdout, "router-v1: listening", *endpoint)
 	return h.Serve(ctx)
+}
+
+// enableLocalGate installs the explicit gate of a router served without the
+// rights service: callers under this service's own account may use every
+// router action, and every other caller is refused.
+func enableLocalGate(h *Host) error {
+	local, err := gate.Local(actionNamespace)
+	if err != nil {
+		return fmt.Errorf("router-v1: %w", err)
+	}
+	return h.EnablePolicy(local)
 }

@@ -69,6 +69,9 @@ func TestFromWirePickRequestFieldParity(t *testing.T) {
 		"Allowed":   "carried onto router.Request's Hosts field under a different name; TestFromWirePickRequestCarriesAllowedHosts checks the value",
 		"Placement": "only Offer reads a placement; a pick is decided by its host allowance",
 		"Reserve":   "only Offer reads an answer reserve",
+		"Cursor":    "only Profiles reads a catalogue continuation; Pick does not page",
+		"Limit":     "only Profiles reads a catalogue page bound; Pick does not page",
+		"Wait":      "only ObserveOffer waits; Pick answers at once",
 	})
 }
 
@@ -83,9 +86,12 @@ func TestToWireOfferFieldParity(t *testing.T) {
 // the closed enum to its wire word.
 func TestFromWireOfferRequestFieldParity(t *testing.T) {
 	checkFieldParity(t, fromWireOfferRequest, map[string]string{
-		"Op":    "every Offer call performs router.OpOffer; the wire request carries no operation to convert",
-		"Model": "an offer names no model; only Pick reads it",
-		"Hosts": "an offer names no host allowance; its placement chooses the servers",
+		"Op":     "every Offer call performs router.OpOffer; the wire request carries no operation to convert",
+		"Model":  "an offer names no model; only Pick reads it",
+		"Hosts":  "an offer names no host allowance; its placement chooses the servers",
+		"Cursor": "only Profiles and ObserveOffer read a cursor; ObserveOffer carries its own argument beside the request",
+		"Limit":  "only Profiles reads a catalogue page bound; Offer does not page",
+		"Wait":   "ObserveOffer carries its wait_ms argument beside the request; Offer answers at once",
 	})
 }
 
@@ -295,7 +301,10 @@ func fill(t *testing.T, v reflect.Value, next *int) {
 	case reflect.Slice:
 		switch v.Type().Elem().Kind() {
 		case reflect.String:
-			v.Set(reflect.ValueOf([]string{"x", "y"}))
+			// A slice of a string-kind generated enum fills with its own type.
+			elem := reflect.New(v.Type().Elem()).Elem()
+			elem.SetString("x")
+			v.Set(reflect.Append(reflect.MakeSlice(v.Type(), 0, 1), elem))
 		case reflect.Struct:
 			elem := reflect.New(v.Type().Elem()).Elem()
 			fillStruct(t, elem, next)
@@ -309,9 +318,9 @@ func fill(t *testing.T, v reflect.Value, next *int) {
 			inner := reflect.New(v.Type().Elem())
 			fill(t, inner.Elem(), next)
 			v.Set(inner)
-		case reflect.Struct:
+		case reflect.Struct, reflect.Bool, reflect.String:
 			inner := reflect.New(v.Type().Elem())
-			fillStruct(t, inner.Elem(), next)
+			fill(t, inner.Elem(), next)
 			v.Set(inner)
 		default:
 			t.Fatalf("convert_test.go: fill does not know pointer element kind %s for field type %s; extend fill before trusting this test", v.Type().Elem().Kind(), v.Type())

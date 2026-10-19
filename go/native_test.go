@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,8 +26,12 @@ func TestNativeRequiresExplicitRoutingAndTrustInputs(t *testing.T) {
 	if !ok || transport.Server == nil || transport.Endpoint != "endpoint" || !transport.Sessions {
 		t.Fatalf("transport %+v, ok %v", transport, ok)
 	}
-	if h.Hosted || h.Wire != WireNative || h.Endpoint() != "" {
+	if h.Hosted || h.Wire != WireNative {
 		t.Fatalf("native host %+v", h)
+	}
+	video, err := NewNative("video", "endpoint", expect, []string{"fixture/video@1"}, []string{ProfileVideo})
+	if err != nil || !slices.Equal(video.HostProfiles(), []string{ProfileVideo}) {
+		t.Fatalf("explicit native video declaration: host %+v, error %v", video, err)
 	}
 	installed, err := h.installed(context.Background(), h)
 	if err != nil || len(installed) != 1 || installed[0] != "qwen/qwen3.6-35b-a3b" {

@@ -2,9 +2,12 @@ package router
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+var getSystemPowerStatus = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetSystemPowerStatus")
 
 type powerStatus struct {
 	ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag byte
@@ -16,8 +19,7 @@ type powerStatus struct {
 // and recorded neither.
 func powerState() string {
 	var s powerStatus
-	r, _, err := syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemPowerStatus").
-		Call(uintptr(unsafe.Pointer(&s)))
+	r, _, err := getSystemPowerStatus.Call(uintptr(unsafe.Pointer(&s)))
 	if r == 0 {
 		return "power state unreadable: " + err.Error()
 	}

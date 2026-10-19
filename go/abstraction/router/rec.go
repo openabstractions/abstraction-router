@@ -2,6 +2,8 @@
 
 package router
 
+import "time"
+
 type Raw = string
 
 func escByte(out []byte, c byte) []byte {
@@ -73,64 +75,35 @@ func strs(out []byte, v []string, depth int) []byte {
 	return append(out, ']')
 }
 
+func enumStrs[T any](out []byte, v []T, depth int, word func(T) string) []byte {
+	if len(v) == 0 {
+		return append(out, '[', ']')
+	}
+	out = append(out, '[', '\n')
+	for i, item := range v {
+		out = pad(out, depth+1)
+		out = esc(out, word(item))
+		if i+1 < len(v) {
+			out = append(out, ',')
+		}
+		out = append(out, '\n')
+	}
+	out = pad(out, depth)
+	return append(out, ']')
+}
+
+// raw writes an opaque value's bytes as they are ([DEF-A3]); whitespace
+// around the value is not part of it.
 func raw(out []byte, s string, depth int) []byte {
 	ws := func(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
-	for i := 0; i < len(s); {
-		c := s[i]
-		if ws(c) {
-			i++
-			continue
-		}
-		switch c {
-		case '"':
-			j := i + 1
-			for j < len(s) {
-				if s[j] == '\\' {
-					j += 2
-					continue
-				}
-				if s[j] == '"' {
-					j++
-					break
-				}
-				j++
-			}
-			out = append(out, s[i:j]...)
-			i = j
-		case '{', '[':
-			out = append(out, c)
-			i++
-			j := i
-			for j < len(s) && ws(s[j]) {
-				j++
-			}
-			if j < len(s) && (s[j] == '}' || s[j] == ']') {
-				out = append(out, s[j])
-				i = j + 1
-			} else {
-				depth++
-				out = append(out, '\n')
-				out = pad(out, depth)
-			}
-		case '}', ']':
-			depth--
-			out = append(out, '\n')
-			out = pad(out, depth)
-			out = append(out, c)
-			i++
-		case ',':
-			out = append(out, ',', '\n')
-			out = pad(out, depth)
-			i++
-		case ':':
-			out = append(out, ':', ' ')
-			i++
-		default:
-			out = append(out, c)
-			i++
-		}
+	i, j := 0, len(s)
+	for i < j && ws(s[i]) {
+		i++
 	}
-	return out
+	for j > i && ws(s[j-1]) {
+		j--
+	}
+	return append(out, s[i:j]...)
 }
 
 func byteLess(a, b string) bool {
@@ -187,6 +160,26 @@ func esc(out []byte, s string) []byte {
 	return append(out, '"')
 }
 
+func strmap(out []byte, m map[string]string, depth int) []byte {
+	keys := sortedKeys(m)
+	if len(keys) == 0 {
+		return append(out, '{', '}')
+	}
+	out = append(out, '{', '\n')
+	for i, k := range keys {
+		out = pad(out, depth+1)
+		out = esc(out, k)
+		out = append(out, ':', ' ')
+		out = esc(out, m[k])
+		if i+1 < len(keys) {
+			out = append(out, ',')
+		}
+		out = append(out, '\n')
+	}
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
 func encList[T any](out []byte, v []T, depth int, enc func([]byte, *T, int) []byte) []byte {
 	if len(v) == 0 {
 		return append(out, '[', ']')
@@ -202,6 +195,65 @@ func encList[T any](out []byte, v []T, depth int, enc func([]byte, *T, int) []by
 	}
 	out = pad(out, depth)
 	return append(out, ']')
+}
+
+// ReasoningEffort is an open vocabulary: a reader keeps a word it has never heard, so
+// a value may be none of the constants below. ReasoningEffort(word) and string(v)
+// convert between the raw word and the vocabulary.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortLow    ReasoningEffort = "low"
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	ReasoningEffortHigh   ReasoningEffort = "high"
+)
+
+// ReasoningEffortValues returns every member of ReasoningEffort in declaration order, in a new slice.
+func ReasoningEffortValues() []ReasoningEffort {
+	return []ReasoningEffort{ReasoningEffortNone, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh}
+}
+
+// IsKnown reports whether v is a declared member of ReasoningEffort.
+func (v ReasoningEffort) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of ReasoningEffort.
+func (v ReasoningEffort) Known() bool {
+	switch v {
+	case ReasoningEffortNone, ReasoningEffortLow, ReasoningEffortMedium, ReasoningEffortHigh:
+		return true
+	}
+	return false
+}
+
+// EngineCause is an open vocabulary: a reader keeps a word it has never heard, so
+// a value may be none of the constants below. EngineCause(word) and string(v)
+// convert between the raw word and the vocabulary.
+type EngineCause string
+
+const (
+	EngineCauseBound        EngineCause = "bound"
+	EngineCauseSourceOnly   EngineCause = "source_only"
+	EngineCauseIncompatible EngineCause = "incompatible"
+	EngineCauseUnknown      EngineCause = "unknown"
+	EngineCauseOther        EngineCause = "other"
+)
+
+// EngineCauseValues returns every member of EngineCause in declaration order, in a new slice.
+func EngineCauseValues() []EngineCause {
+	return []EngineCause{EngineCauseBound, EngineCauseSourceOnly, EngineCauseIncompatible, EngineCauseUnknown, EngineCauseOther}
+}
+
+// IsKnown reports whether v is a declared member of EngineCause.
+func (v EngineCause) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EngineCause.
+func (v EngineCause) Known() bool {
+	switch v {
+	case EngineCauseBound, EngineCauseSourceOnly, EngineCauseIncompatible, EngineCauseUnknown, EngineCauseOther:
+		return true
+	}
+	return false
 }
 
 // AvailabilityCause is an open vocabulary: a reader keeps a word it has never heard, so
@@ -223,6 +275,9 @@ const (
 func AvailabilityCauseValues() []AvailabilityCause {
 	return []AvailabilityCause{AvailabilityCauseTransportUnavailable, AvailabilityCauseCredential, AvailabilityCauseRights, AvailabilityCauseConfiguration, AvailabilityCauseMalformed, AvailabilityCauseUnknown, AvailabilityCauseOther}
 }
+
+// IsKnown reports whether v is a declared member of AvailabilityCause.
+func (v AvailabilityCause) IsKnown() bool { return v.Known() }
 
 // Known reports whether v is a member of AvailabilityCause.
 func (v AvailabilityCause) Known() bool {
@@ -331,6 +386,9 @@ func PlacementValues() []Placement {
 	return []Placement{PlacementLocal, PlacementHosted, PlacementAny}
 }
 
+// IsKnown reports whether v is a declared member of Placement.
+func (v Placement) IsKnown() bool { return v.Known() }
+
 // Known reports whether v is a member of Placement.
 func (v Placement) Known() bool {
 	_, ok := v.WireName()
@@ -354,6 +412,9 @@ const (
 func ContextSourceValues() []ContextSource {
 	return []ContextSource{ContextSourceEffective, ContextSourceMaximum, ContextSourceDefault, ContextSourceUnknown, ContextSourceNone}
 }
+
+// IsKnown reports whether v is a declared member of ContextSource.
+func (v ContextSource) IsKnown() bool { return v.Known() }
 
 // Known reports whether v is a member of ContextSource.
 func (v ContextSource) Known() bool {
@@ -472,8 +533,133 @@ func OfferOutcomeValues() []OfferOutcome {
 	return []OfferOutcome{OfferOutcomeOffered, OfferOutcomeInvalid, OfferOutcomeUnavailable, OfferOutcomeForbidden, OfferOutcomeNotPermitted}
 }
 
+// IsKnown reports whether v is a declared member of OfferOutcome.
+func (v OfferOutcome) IsKnown() bool { return v.Known() }
+
 // Known reports whether v is a member of OfferOutcome.
 func (v OfferOutcome) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+// ModalityOutcome is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseModalityOutcome preserve the exact wire words.
+type ModalityOutcome uint32
+
+const (
+	ModalityOutcomePage         ModalityOutcome = 1
+	ModalityOutcomeGap          ModalityOutcome = 2
+	ModalityOutcomeInvalid      ModalityOutcome = 3
+	ModalityOutcomeForbidden    ModalityOutcome = 4
+	ModalityOutcomeUnavailable  ModalityOutcome = 5
+	ModalityOutcomeNotPermitted ModalityOutcome = 6
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v ModalityOutcome) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v ModalityOutcome) WireName() (string, bool) {
+	switch v {
+	case ModalityOutcomePage:
+		return "page", true
+	case ModalityOutcomeGap:
+		return "gap", true
+	case ModalityOutcomeInvalid:
+		return "invalid", true
+	case ModalityOutcomeForbidden:
+		return "forbidden", true
+	case ModalityOutcomeUnavailable:
+		return "unavailable", true
+	case ModalityOutcomeNotPermitted:
+		return "not_permitted", true
+	}
+	return "", false
+}
+
+// ParseModalityOutcome returns the member named by an exact wire word.
+func ParseModalityOutcome(word string) (ModalityOutcome, bool) {
+	switch word {
+	case "page":
+		return ModalityOutcomePage, true
+	case "gap":
+		return ModalityOutcomeGap, true
+	case "invalid":
+		return ModalityOutcomeInvalid, true
+	case "forbidden":
+		return ModalityOutcomeForbidden, true
+	case "unavailable":
+		return ModalityOutcomeUnavailable, true
+	case "not_permitted":
+		return ModalityOutcomeNotPermitted, true
+	}
+	return ModalityOutcome(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v ModalityOutcome) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *ModalityOutcome) UnmarshalText(text []byte) error {
+	word, ok := ParseModalityOutcome(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v ModalityOutcome) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *ModalityOutcome) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseModalityOutcome(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// ModalityOutcomeValues returns every member of ModalityOutcome in declaration order, in a new slice.
+func ModalityOutcomeValues() []ModalityOutcome {
+	return []ModalityOutcome{ModalityOutcomePage, ModalityOutcomeGap, ModalityOutcomeInvalid, ModalityOutcomeForbidden, ModalityOutcomeUnavailable, ModalityOutcomeNotPermitted}
+}
+
+// IsKnown reports whether v is a declared member of ModalityOutcome.
+func (v ModalityOutcome) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of ModalityOutcome.
+func (v ModalityOutcome) Known() bool {
 	_, ok := v.WireName()
 	return ok
 }
@@ -503,6 +689,9 @@ func ServiceErrorCodeValues() []ServiceErrorCode {
 	return []ServiceErrorCode{ServiceErrorCodeHandlerError, ServiceErrorCodeInvalidResult, ServiceErrorCodeUnknownVersion, ServiceErrorCodeUnknownService, ServiceErrorCodeUnknownMethod, ServiceErrorCodeWrongMode, ServiceErrorCodeInternal, ServiceErrorCodeInvalidRequest, ServiceErrorCodeCallerRefused, ServiceErrorCodeUnknownOperation, ServiceErrorCodeUnavailable, ServiceErrorCodeForbidden}
 }
 
+// IsKnown reports whether v is a declared member of ServiceErrorCode.
+func (v ServiceErrorCode) IsKnown() bool { return v.Known() }
+
 // Known reports whether v is a member of ServiceErrorCode.
 func (v ServiceErrorCode) Known() bool {
 	switch v {
@@ -512,7 +701,588 @@ func (v ServiceErrorCode) Known() bool {
 	return false
 }
 
-var Profiles = []string{"chat", "embed", "transcription", "speech", "image"}
+// EndpointServiceReadiness is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseEndpointServiceReadiness preserve the exact wire words.
+type EndpointServiceReadiness uint32
+
+const (
+	EndpointServiceReadinessReady    EndpointServiceReadiness = 1
+	EndpointServiceReadinessNotReady EndpointServiceReadiness = 2
+	EndpointServiceReadinessUnknown  EndpointServiceReadiness = 3
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v EndpointServiceReadiness) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v EndpointServiceReadiness) WireName() (string, bool) {
+	switch v {
+	case EndpointServiceReadinessReady:
+		return "ready", true
+	case EndpointServiceReadinessNotReady:
+		return "not_ready", true
+	case EndpointServiceReadinessUnknown:
+		return "unknown", true
+	}
+	return "", false
+}
+
+// ParseEndpointServiceReadiness returns the member named by an exact wire word.
+func ParseEndpointServiceReadiness(word string) (EndpointServiceReadiness, bool) {
+	switch word {
+	case "ready":
+		return EndpointServiceReadinessReady, true
+	case "not_ready":
+		return EndpointServiceReadinessNotReady, true
+	case "unknown":
+		return EndpointServiceReadinessUnknown, true
+	}
+	return EndpointServiceReadiness(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v EndpointServiceReadiness) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *EndpointServiceReadiness) UnmarshalText(text []byte) error {
+	word, ok := ParseEndpointServiceReadiness(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v EndpointServiceReadiness) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *EndpointServiceReadiness) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseEndpointServiceReadiness(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// EndpointServiceReadinessValues returns every member of EndpointServiceReadiness in declaration order, in a new slice.
+func EndpointServiceReadinessValues() []EndpointServiceReadiness {
+	return []EndpointServiceReadiness{EndpointServiceReadinessReady, EndpointServiceReadinessNotReady, EndpointServiceReadinessUnknown}
+}
+
+// IsKnown reports whether v is a declared member of EndpointServiceReadiness.
+func (v EndpointServiceReadiness) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointServiceReadiness.
+func (v EndpointServiceReadiness) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+// EndpointRefusalSource is an open vocabulary: a reader keeps a word it has never heard, so
+// a value may be none of the constants below. EndpointRefusalSource(word) and string(v)
+// convert between the raw word and the vocabulary.
+type EndpointRefusalSource string
+
+const (
+	EndpointRefusalSourceRights      EndpointRefusalSource = "rights"
+	EndpointRefusalSourceCredentials EndpointRefusalSource = "credentials"
+	EndpointRefusalSourceLicense     EndpointRefusalSource = "license"
+	EndpointRefusalSourceTerms       EndpointRefusalSource = "terms"
+	EndpointRefusalSourceIdentity    EndpointRefusalSource = "identity"
+	EndpointRefusalSourceOS          EndpointRefusalSource = "os"
+)
+
+// EndpointRefusalSourceValues returns every member of EndpointRefusalSource in declaration order, in a new slice.
+func EndpointRefusalSourceValues() []EndpointRefusalSource {
+	return []EndpointRefusalSource{EndpointRefusalSourceRights, EndpointRefusalSourceCredentials, EndpointRefusalSourceLicense, EndpointRefusalSourceTerms, EndpointRefusalSourceIdentity, EndpointRefusalSourceOS}
+}
+
+// IsKnown reports whether v is a declared member of EndpointRefusalSource.
+func (v EndpointRefusalSource) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointRefusalSource.
+func (v EndpointRefusalSource) Known() bool {
+	switch v {
+	case EndpointRefusalSourceRights, EndpointRefusalSourceCredentials, EndpointRefusalSourceLicense, EndpointRefusalSourceTerms, EndpointRefusalSourceIdentity, EndpointRefusalSourceOS:
+		return true
+	}
+	return false
+}
+
+// EndpointRefusalDecision is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseEndpointRefusalDecision preserve the exact wire words.
+type EndpointRefusalDecision uint32
+
+const (
+	EndpointRefusalDecisionDenied     EndpointRefusalDecision = 1
+	EndpointRefusalDecisionNotGranted EndpointRefusalDecision = 2
+	EndpointRefusalDecisionPersonOnly EndpointRefusalDecision = 3
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v EndpointRefusalDecision) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v EndpointRefusalDecision) WireName() (string, bool) {
+	switch v {
+	case EndpointRefusalDecisionDenied:
+		return "denied", true
+	case EndpointRefusalDecisionNotGranted:
+		return "not_granted", true
+	case EndpointRefusalDecisionPersonOnly:
+		return "person_only", true
+	}
+	return "", false
+}
+
+// ParseEndpointRefusalDecision returns the member named by an exact wire word.
+func ParseEndpointRefusalDecision(word string) (EndpointRefusalDecision, bool) {
+	switch word {
+	case "denied":
+		return EndpointRefusalDecisionDenied, true
+	case "not_granted":
+		return EndpointRefusalDecisionNotGranted, true
+	case "person_only":
+		return EndpointRefusalDecisionPersonOnly, true
+	}
+	return EndpointRefusalDecision(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v EndpointRefusalDecision) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *EndpointRefusalDecision) UnmarshalText(text []byte) error {
+	word, ok := ParseEndpointRefusalDecision(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v EndpointRefusalDecision) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *EndpointRefusalDecision) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseEndpointRefusalDecision(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// EndpointRefusalDecisionValues returns every member of EndpointRefusalDecision in declaration order, in a new slice.
+func EndpointRefusalDecisionValues() []EndpointRefusalDecision {
+	return []EndpointRefusalDecision{EndpointRefusalDecisionDenied, EndpointRefusalDecisionNotGranted, EndpointRefusalDecisionPersonOnly}
+}
+
+// IsKnown reports whether v is a declared member of EndpointRefusalDecision.
+func (v EndpointRefusalDecision) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointRefusalDecision.
+func (v EndpointRefusalDecision) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+// EndpointRefusalAsk is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseEndpointRefusalAsk preserve the exact wire words.
+type EndpointRefusalAsk uint32
+
+const (
+	EndpointRefusalAskAvailable EndpointRefusalAsk = 1
+	EndpointRefusalAskNone      EndpointRefusalAsk = 2
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v EndpointRefusalAsk) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v EndpointRefusalAsk) WireName() (string, bool) {
+	switch v {
+	case EndpointRefusalAskAvailable:
+		return "available", true
+	case EndpointRefusalAskNone:
+		return "none", true
+	}
+	return "", false
+}
+
+// ParseEndpointRefusalAsk returns the member named by an exact wire word.
+func ParseEndpointRefusalAsk(word string) (EndpointRefusalAsk, bool) {
+	switch word {
+	case "available":
+		return EndpointRefusalAskAvailable, true
+	case "none":
+		return EndpointRefusalAskNone, true
+	}
+	return EndpointRefusalAsk(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v EndpointRefusalAsk) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *EndpointRefusalAsk) UnmarshalText(text []byte) error {
+	word, ok := ParseEndpointRefusalAsk(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v EndpointRefusalAsk) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *EndpointRefusalAsk) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseEndpointRefusalAsk(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// EndpointRefusalAskValues returns every member of EndpointRefusalAsk in declaration order, in a new slice.
+func EndpointRefusalAskValues() []EndpointRefusalAsk {
+	return []EndpointRefusalAsk{EndpointRefusalAskAvailable, EndpointRefusalAskNone}
+}
+
+// IsKnown reports whether v is a declared member of EndpointRefusalAsk.
+func (v EndpointRefusalAsk) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointRefusalAsk.
+func (v EndpointRefusalAsk) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+// EndpointProducerCheckState is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseEndpointProducerCheckState preserve the exact wire words.
+type EndpointProducerCheckState uint32
+
+const (
+	EndpointProducerCheckStateCurrent    EndpointProducerCheckState = 1
+	EndpointProducerCheckStateRepaired   EndpointProducerCheckState = 2
+	EndpointProducerCheckStateStale      EndpointProducerCheckState = 3
+	EndpointProducerCheckStateRefused    EndpointProducerCheckState = 4
+	EndpointProducerCheckStateUnverified EndpointProducerCheckState = 5
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v EndpointProducerCheckState) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v EndpointProducerCheckState) WireName() (string, bool) {
+	switch v {
+	case EndpointProducerCheckStateCurrent:
+		return "current", true
+	case EndpointProducerCheckStateRepaired:
+		return "repaired", true
+	case EndpointProducerCheckStateStale:
+		return "stale", true
+	case EndpointProducerCheckStateRefused:
+		return "refused", true
+	case EndpointProducerCheckStateUnverified:
+		return "unverified", true
+	}
+	return "", false
+}
+
+// ParseEndpointProducerCheckState returns the member named by an exact wire word.
+func ParseEndpointProducerCheckState(word string) (EndpointProducerCheckState, bool) {
+	switch word {
+	case "current":
+		return EndpointProducerCheckStateCurrent, true
+	case "repaired":
+		return EndpointProducerCheckStateRepaired, true
+	case "stale":
+		return EndpointProducerCheckStateStale, true
+	case "refused":
+		return EndpointProducerCheckStateRefused, true
+	case "unverified":
+		return EndpointProducerCheckStateUnverified, true
+	}
+	return EndpointProducerCheckState(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v EndpointProducerCheckState) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *EndpointProducerCheckState) UnmarshalText(text []byte) error {
+	word, ok := ParseEndpointProducerCheckState(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v EndpointProducerCheckState) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *EndpointProducerCheckState) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseEndpointProducerCheckState(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// EndpointProducerCheckStateValues returns every member of EndpointProducerCheckState in declaration order, in a new slice.
+func EndpointProducerCheckStateValues() []EndpointProducerCheckState {
+	return []EndpointProducerCheckState{EndpointProducerCheckStateCurrent, EndpointProducerCheckStateRepaired, EndpointProducerCheckStateStale, EndpointProducerCheckStateRefused, EndpointProducerCheckStateUnverified}
+}
+
+// IsKnown reports whether v is a declared member of EndpointProducerCheckState.
+func (v EndpointProducerCheckState) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointProducerCheckState.
+func (v EndpointProducerCheckState) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+// EndpointDescriptionOutcome is a closed vocabulary. Its numeric values are private implementation
+// tags; String and ParseEndpointDescriptionOutcome preserve the exact wire words.
+type EndpointDescriptionOutcome uint32
+
+const (
+	EndpointDescriptionOutcomeDescribed   EndpointDescriptionOutcome = 1
+	EndpointDescriptionOutcomeForbidden   EndpointDescriptionOutcome = 2
+	EndpointDescriptionOutcomeUnavailable EndpointDescriptionOutcome = 3
+	EndpointDescriptionOutcomeInvalid     EndpointDescriptionOutcome = 4
+	EndpointDescriptionOutcomeUnsupported EndpointDescriptionOutcome = 5
+)
+
+// String returns v's exact wire word, or the empty string for an invalid value.
+func (v EndpointDescriptionOutcome) String() string {
+	word, _ := v.WireName()
+	return word
+}
+
+// WireName returns v's exact wire word and whether v names a member.
+func (v EndpointDescriptionOutcome) WireName() (string, bool) {
+	switch v {
+	case EndpointDescriptionOutcomeDescribed:
+		return "described", true
+	case EndpointDescriptionOutcomeForbidden:
+		return "forbidden", true
+	case EndpointDescriptionOutcomeUnavailable:
+		return "unavailable", true
+	case EndpointDescriptionOutcomeInvalid:
+		return "invalid", true
+	case EndpointDescriptionOutcomeUnsupported:
+		return "unsupported", true
+	}
+	return "", false
+}
+
+// ParseEndpointDescriptionOutcome returns the member named by an exact wire word.
+func ParseEndpointDescriptionOutcome(word string) (EndpointDescriptionOutcome, bool) {
+	switch word {
+	case "described":
+		return EndpointDescriptionOutcomeDescribed, true
+	case "forbidden":
+		return EndpointDescriptionOutcomeForbidden, true
+	case "unavailable":
+		return EndpointDescriptionOutcomeUnavailable, true
+	case "invalid":
+		return EndpointDescriptionOutcomeInvalid, true
+	case "unsupported":
+		return EndpointDescriptionOutcomeUnsupported, true
+	}
+	return EndpointDescriptionOutcome(0), false
+}
+
+// MarshalText preserves the member's exact wire word for standard text users,
+// including JSON object keys. Invalid and zero values are refused.
+func (v EndpointDescriptionOutcome) MarshalText() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return []byte(word), nil
+}
+
+// UnmarshalText accepts an exact wire word and refuses unknown text.
+func (v *EndpointDescriptionOutcome) UnmarshalText(text []byte) error {
+	word, ok := ParseEndpointDescriptionOutcome(string(text))
+	if !ok {
+		return &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	*v = word
+	return nil
+}
+
+// MarshalJSON keeps closed vocabularies as JSON strings rather than their
+// private numeric implementation tags.
+func (v EndpointDescriptionOutcome) MarshalJSON() ([]byte, error) {
+	word, ok := v.WireName()
+	if !ok {
+		return nil, &Refusal{Word: "bad_enum", Offset: 0}
+	}
+	return esc(nil, word), nil
+}
+
+// UnmarshalJSON accepts only an exact JSON string member. Numbers, null and
+// unknown strings are refused by the same codec rules as generated records.
+func (v *EndpointDescriptionOutcome) UnmarshalJSON(data []byte) error {
+	r := reader{buf: data}
+	r.ws()
+	word, err := r.str()
+	if err != nil {
+		return err
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		return r.refuse("trailing_bytes")
+	}
+	parsed, ok := ParseEndpointDescriptionOutcome(word)
+	if !ok {
+		return r.refuse("bad_enum")
+	}
+	*v = parsed
+	return nil
+}
+
+// EndpointDescriptionOutcomeValues returns every member of EndpointDescriptionOutcome in declaration order, in a new slice.
+func EndpointDescriptionOutcomeValues() []EndpointDescriptionOutcome {
+	return []EndpointDescriptionOutcome{EndpointDescriptionOutcomeDescribed, EndpointDescriptionOutcomeForbidden, EndpointDescriptionOutcomeUnavailable, EndpointDescriptionOutcomeInvalid, EndpointDescriptionOutcomeUnsupported}
+}
+
+// IsKnown reports whether v is a declared member of EndpointDescriptionOutcome.
+func (v EndpointDescriptionOutcome) IsKnown() bool { return v.Known() }
+
+// Known reports whether v is a member of EndpointDescriptionOutcome.
+func (v EndpointDescriptionOutcome) Known() bool {
+	_, ok := v.WireName()
+	return ok
+}
+
+var Profiles = []string{"chat", "embed", "transcription", "speech", "image", "live", "video"}
 
 var Verdicts = []string{"resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"}
 
@@ -535,6 +1305,10 @@ type PickRequest struct {
 	Profile string
 }
 
+// [Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description).
+// Diagnostic user and path descriptions observed by the server. They are
+// display information, not stable identifiers, filesystem paths or
+// authorization proof, and are never accepted as request claims.
 type Caller struct {
 	UserDescription string
 	PathDescription string
@@ -546,21 +1320,47 @@ type Observation struct {
 	CacheAgeMs int64
 }
 
-// hosted is true for a name read from a hosted host's model listing; such a
-// name is never resident. profiles are what the host's own model metadata says
-// this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply. held_in names the
-// storage inventory stores holding an object this alias's own name or digest
-// matches, in store order; empty when no store's object matches this name. host
-// is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's maximum supported
-// context window in tokens, read from host metadata without loading it (LM
-// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-// max_context_window); zero when the host reports none.
-// effective_context_length is a positive per-request context limit the host
-// currently reports: the loaded value when the model is resident, otherwise its
-// configured value when the host reports one (Lemonade's context_length); zero
-// when unknown. A nonpositive or contradictory effective value is omitted.
+// The reasoning controls a model takes. efforts are the chat@3 effort words it
+// answers to, approximated ones included; budget is true when it also takes a
+// reasoning token budget; default_effort is what it reasons at when the caller
+// names none.
+type ReasoningSupport struct {
+	Efforts       []ReasoningEffort
+	Budget        bool
+	DefaultEffort *ReasoningEffort
+}
+
+// What one alias on its host takes and gives: input and output modalities
+// (text, image, audio, video), tool calls, structured output, its reasoning
+// controls and the chat@3 extension names it supports. Sources in order: the
+// catalogue entry for the model, then the engine's own facts (a loaded vision
+// projector, the chat template's tool section), then the hosted provider's
+// model listing. A fact no source states is absent, never guessed. Display
+// data; it grants nothing.
+type ModelCapabilities struct {
+	Input            []string
+	Output           []string
+	Tools            *bool
+	StructuredOutput *bool
+	Reasoning        *ReasoningSupport
+	Extensions       []string
+}
+
+// [Alias](https://openabstractions.github.io/reference.html#concept-router.alias):
+// capabilities are this alias's own on its host, never merged with the same
+// family on another host. hosted is true for a name read from a hosted host's
+// model listing; such a name is never resident. profiles are what the host's
+// own model metadata says this name serves; empty when the host reports none,
+// and then its HostState profiles apply. held_in names the storage inventory
+// stores holding an object this alias's own name or digest matches, in store
+// order; empty when no store's object matches this name. host is empty exactly
+// for a name no host serves, which a store holds and which is never resident or
+// servable. context_length is the model's maximum supported context window in
+// tokens, read from host metadata without loading it; zero when the host
+// reports none. effective_context_length is a positive per-request context
+// limit the host currently reports: the loaded value when the model is
+// resident, otherwise its configured value when the host reports one; zero when
+// unknown. A nonpositive or contradictory effective value is omitted.
 type Alias struct {
 	Host                   string
 	Name                   string
@@ -571,19 +1371,68 @@ type Alias struct {
 	HeldIn                 []string
 	ContextLength          int64
 	EffectiveContextLength int64
+	Capabilities           *ModelCapabilities
 }
 
-// One role-bearing object a store holds, folded into a family's detail rather
-// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
-// store is the holder, role is projector, vae, or another value a storage
-// inventory source's descriptor names, and name is the store's own name for the
-// object when it named one.
+// One [role-bearing
+// object](https://openabstractions.github.io/reference.html#concept-model-identity.component)
+// a store holds, folded into a
+// [family](https://openabstractions.github.io/reference.html#concept-model.family-identity)'s
+// detail rather than listed as a family of its own
+// (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is
+// projector, vae, or another value a storage inventory source's descriptor
+// names, and name is the store's own name for the object when it named one.
 type Component struct {
 	Store string
 	Role  string
 	Name  string
 }
 
+// The provider's selected program loading weights (vocabulary D12), identified
+// within its host and registration generation. Version is omitted when
+// unreported. Source is display provenance, never an executable path or
+// authority claim.
+type Engine struct {
+	ID      string
+	Name    string
+	Version string
+	Source  string
+}
+
+// An explicit configured content-object-to-engine association from the accepted
+// provider registration or recipe. It asserts neither general format acceptance
+// nor readiness, and is separate from the client/service binding and actual
+// inference-route record.
+type ModelEngine struct {
+	Host     string
+	Model    string
+	Engine   string
+	Profiles []string
+	Source   string
+	Role     string
+}
+
+// One storage content object projected with its source's model facts. Domain is
+// empty locally; object is an opaque source ID and digest requires inventory
+// evidence. A collection manifest is never one object. Missing identity or
+// descriptor facts remain unknown. Existing Component retains the logical
+// role/base-family relation. Why is plain display text, never parsed. Clients
+// never display digest as page text.
+type ModelObject struct {
+	Domain       string
+	Store        string
+	Name         string
+	Object       string
+	Digest       string
+	Format       string
+	Architecture string
+	Role         string
+	Engines      []ModelEngine
+	Cause        EngineCause
+	Why          string
+}
+
+// [Family](https://openabstractions.github.io/reference.html#concept-router.family-catalogue):
 // names lists one alias per server and name; a name two servers serve appears
 // twice, once per server. held_in names the storage inventory stores holding an
 // object of this family, in store order, whether or not a host serves it; empty
@@ -597,13 +1446,17 @@ type Component struct {
 // it, an object that is this family's only content — held_in and
 // family_source cover the family it was folded into or the family it stands in
 // for either way; components exists to say the family answers for a part, not a
-// whole model, when that is what it is.
+// whole model, when that is what it is. title is the model catalogue's display
+// name for the family, empty when none is known; it is shown to people and
+// never asked for.
 type Family struct {
 	Family       string
 	Names        []Alias
 	HeldIn       []string
 	FamilySource string
 	Components   []Component
+	Title        string
+	Objects      []ModelObject
 }
 
 type ModelsSnapshot struct {
@@ -641,6 +1494,7 @@ type HostState struct {
 	Profiles          []string
 	Domain            string
 	AvailabilityCause *AvailabilityCause
+	Engines           []Engine
 }
 
 type Ask struct {
@@ -699,7 +1553,8 @@ type OfferRequest struct {
 // when a counted server fixes its window at load and reported none, none for a
 // profile without a context window. input is context minus the request's
 // reserve, 0 when nothing remains or context is 0. unknown names the aliases
-// whose server reported no usable request limit, as <server>/<name>.
+// whose server reported no usable request limit, as <server>/<name>. title is
+// the family's display name as in Family.
 type Offer struct {
 	Family        string
 	Names         []string
@@ -708,6 +1563,7 @@ type Offer struct {
 	ContextSource ContextSource
 	Input         int64
 	Unknown       []string
+	Title         string
 }
 
 // Exactly offered carries observation and offers. Every refusal carries an
@@ -716,6 +1572,111 @@ type OfferSnapshot struct {
 	Observation Observation
 	Offers      []Offer
 	Outcome     OfferOutcome
+}
+
+// One long-poll Offer reading. Exactly offered carries observation, offers and
+// cursor, a digest of the offers; it answers once that digest differs from the
+// cursor given, or when wait_ms ends. Every refusal carries an empty
+// observation, no offers and an empty cursor; it makes no model availability
+// claim.
+type OfferObservation struct {
+	Observation Observation
+	Offers      []Offer
+	Outcome     OfferOutcome
+	Cursor      string
+}
+
+// page carries at most 64 distinct modality IDs, each at most 256 UTF-8 bytes,
+// in UTF-8 byte order. next is an opaque cursor of at most 256 bytes, empty
+// exactly when complete. The catalogue contains the seed modalities and valid
+// current registered host declarations, independently of model availability.
+// Other outcomes carry no modalities, an empty next and complete false. gap
+// requires restarting with an empty cursor.
+type ModalityPage struct {
+	Outcome    ModalityOutcome
+	Modalities []string
+	Next       string
+	Complete   bool
+}
+
+// The one refusal record every OA service carries beside a refusing outcome
+// (RIGHTS-E3; conventions CONV-E4). source names the authority that refused:
+// rights, credentials, license, terms, identity or os. decision is denied for
+// an explicit refusal, not_granted where no rule permits, and person_only where
+// only the person may answer the question. ask says whether asking can change
+// the answer: available, or none. action is the exact registered
+// <owner>/<name>; question the pending question's id; credential the
+// credential's name; retry_after_ms the earliest useful retry in milliseconds,
+// omitted when zero. Stop asking is denied with ask none. Current carriers
+// include config@2, messages@1, registry@3, endpoint@2 and chat@3, declared in
+// config.thrift, messages.thrift, registration.thrift and inference.thrift.
+// Other services adopt it in their scheduled versions.
+type EndpointRefusalDetail struct {
+	Source       EndpointRefusalSource
+	Decision     EndpointRefusalDecision
+	Ask          EndpointRefusalAsk
+	Action       string
+	Question     string
+	Credential   string
+	RetryAfterMs int64
+}
+
+// Producer assertion validated by the runtime. Kind is the governed open
+// build-time vocabulary <owner>/<name>, not a display string or an authority
+// claim. copy identifies one copy within the kind. reason follows D87
+// domain:word:detail as open display text. checked is the producer's claimed
+// check time. Custom/unknown copies are unverified; readiness remains
+// independent. No runtime kind-registration method is introduced.
+type EndpointProducerCheck struct {
+	Kind    string
+	Copy    string
+	State   EndpointProducerCheckState
+	Reason  string
+	Checked string
+}
+
+// endpoint@2 service observation. definition_hash is sha256: plus64 lowercase
+// hex over this service version's canonical wire form (CONV-V2), verified by
+// the definition-hash owner. reason retains readiness errors and is empty when
+// ready. capabilities remain display-only. Program-level producer checks belong
+// to EndpointDescription and are independent of service readiness.
+type EndpointServiceState struct {
+	Service        string
+	Readiness      EndpointServiceReadiness
+	Reason         string
+	Guarantees     []string
+	Capabilities   map[string]string
+	DefinitionHash string
+}
+
+// Complete endpoint@2 description with each advertised service's definition
+// hash and one program-level producer-check list. Checks are independent of
+// service readiness; absence means unobserved, never verified.
+// Forbidden/unavailable authority refusals carry the single Rights-owned
+// EndpointRefusalDetail; other outcomes omit it. Unsupported carries the
+// existing bounded reason with D87 unsupported:not_implemented words; no closed
+// staged-reason vocabulary is frozen. Non-described replies disclose no
+// program/version/services/checks. Endpoint@1 and its closed
+// EndpointDescription/EndpointServiceState remain unchanged. The compact value
+// ceiling excluding insignificant JSON whitespace is IPC-F1; an oversized whole
+// reply is unavailable/bound:reply_bytes without truncation.
+type EndpointDescription struct {
+	Outcome  EndpointDescriptionOutcome
+	Program  string
+	Version  string
+	Services []EndpointServiceState
+	Refusal  *EndpointRefusalDetail
+	Reason   string
+	Checks   []EndpointProducerCheck
+}
+
+type EndpointDescriptionResult struct {
+	Value EndpointDescription
+}
+
+type oaRouterModalitiesArguments struct {
+	Cursor string
+	Limit  int64
 }
 
 type oaRouterModelsArguments struct {
@@ -732,6 +1693,12 @@ type oaRouterPickArguments struct {
 
 type oaRouterOfferArguments struct {
 	Request OfferRequest
+}
+
+type oaRouterObserveOfferArguments struct {
+	Request OfferRequest
+	Cursor  string
+	WaitMs  int64
 }
 
 type oaServiceFrame struct {
@@ -754,6 +1721,10 @@ type oaServiceError struct {
 	Message string
 }
 
+type oaRouterModalitiesResult struct {
+	Value ModalityPage
+}
+
 type oaRouterModelsResult struct {
 	Value ModelsSnapshot
 }
@@ -768,6 +1739,10 @@ type oaRouterPickResult struct {
 
 type oaRouterOfferResult struct {
 	Value OfferSnapshot
+}
+
+type oaRouterObserveOfferResult struct {
+	Value OfferObservation
 }
 
 func encHostAllowance(out []byte, v *HostAllowance, depth int) []byte {
@@ -862,6 +1837,141 @@ func encObservation(out []byte, v *Observation, depth int) []byte {
 	return append(out, '}')
 }
 
+func encReasoningSupport(out []byte, v *ReasoningSupport, depth int) []byte {
+	if n := len(v.Efforts); n > 8 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "efforts")
+	out = append(out, ':', ' ')
+	out = enumStrs(out, v.Efforts, depth+1, func(v ReasoningEffort) string { return string(v) })
+	if v.Budget {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "budget")
+		out = append(out, ':', ' ')
+		if v.Budget {
+			out = append(out, 't', 'r', 'u', 'e')
+		} else {
+			out = append(out, 'f', 'a', 'l', 's', 'e')
+		}
+	}
+	if v.DefaultEffort != nil {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "default_effort")
+		out = append(out, ':', ' ')
+		out = esc(out, string(*v.DefaultEffort))
+	}
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encModelCapabilities(out []byte, v *ModelCapabilities, depth int) []byte {
+	if n := len(v.Input); n > 16 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, oaElement := range v.Input {
+		if n := len(oaElement); n < 1 || n > 256 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Output); n > 16 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, oaElement := range v.Output {
+		if n := len(oaElement); n < 1 || n > 256 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Extensions); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	first := true
+	if len(v.Input) != 0 {
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "input")
+		out = append(out, ':', ' ')
+		out = strs(out, v.Input, depth+1)
+	}
+	if len(v.Output) != 0 {
+		if !first {
+			out = append(out, ',')
+		}
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "output")
+		out = append(out, ':', ' ')
+		out = strs(out, v.Output, depth+1)
+	}
+	if v.Tools != nil {
+		if !first {
+			out = append(out, ',')
+		}
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "tools")
+		out = append(out, ':', ' ')
+		if *v.Tools {
+			out = append(out, 't', 'r', 'u', 'e')
+		} else {
+			out = append(out, 'f', 'a', 'l', 's', 'e')
+		}
+	}
+	if v.StructuredOutput != nil {
+		if !first {
+			out = append(out, ',')
+		}
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "structured_output")
+		out = append(out, ':', ' ')
+		if *v.StructuredOutput {
+			out = append(out, 't', 'r', 'u', 'e')
+		} else {
+			out = append(out, 'f', 'a', 'l', 's', 'e')
+		}
+	}
+	if v.Reasoning != nil {
+		if !first {
+			out = append(out, ',')
+		}
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "reasoning")
+		out = append(out, ':', ' ')
+		out = encReasoningSupport(out, v.Reasoning, depth+1)
+	}
+	if len(v.Extensions) != 0 {
+		if !first {
+			out = append(out, ',')
+		}
+		first = false
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "extensions")
+		out = append(out, ':', ' ')
+		out = strs(out, v.Extensions, depth+1)
+	}
+	if !first {
+		out = append(out, '\n')
+		out = pad(out, depth)
+	}
+	return append(out, '}')
+}
+
 func encAlias(out []byte, v *Alias, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
@@ -939,6 +2049,14 @@ func encAlias(out []byte, v *Alias, depth int) []byte {
 		out = append(out, ':', ' ')
 		out = num(out, v.EffectiveContextLength)
 	}
+	if v.Capabilities != nil {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "capabilities")
+		out = append(out, ':', ' ')
+		out = encModelCapabilities(out, v.Capabilities, depth+1)
+	}
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -970,7 +2088,236 @@ func encComponent(out []byte, v *Component, depth int) []byte {
 	return append(out, '}')
 }
 
+func encEngine(out []byte, v *Engine, depth int) []byte {
+	if n := len(v.ID); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Name); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Version); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Source); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "id")
+	out = append(out, ':', ' ')
+	out = esc(out, v.ID)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "name")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Name)
+	if v.Version != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "version")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Version)
+	}
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "source")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Source)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encModelEngine(out []byte, v *ModelEngine, depth int) []byte {
+	if n := len(v.Host); n > 4096 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Model); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Engine); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Profiles); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, oaElement := range v.Profiles {
+		if n := len(oaElement); n < 1 || n > 256 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Source); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Role); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "host")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Host)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "model")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Model)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "engine")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Engine)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "profiles")
+	out = append(out, ':', ' ')
+	out = strs(out, v.Profiles, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "source")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Source)
+	if v.Role != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "role")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Role)
+	}
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encModelObject(out []byte, v *ModelObject, depth int) []byte {
+	if n := len(v.Domain); n > 4096 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Store); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Name); n > 4096 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Object); n > 1024 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Digest); n > 135 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Format); n > 128 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Architecture); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Role); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Engines); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Why); n > 4096 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "domain")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Domain)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "store")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Store)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "name")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Name)
+	if v.Object != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "object")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Object)
+	}
+	if v.Digest != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "digest")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Digest)
+	}
+	if v.Format != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "format")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Format)
+	}
+	if v.Architecture != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "architecture")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Architecture)
+	}
+	if v.Role != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "role")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Role)
+	}
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "engines")
+	out = append(out, ':', ' ')
+	out = encList(out, v.Engines, depth+1, encModelEngine)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "cause")
+	out = append(out, ':', ' ')
+	out = esc(out, string(v.Cause))
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "why")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Why)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
 func encFamily(out []byte, v *Family, depth int) []byte {
+	if n := len(v.Title); n > 128 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Objects); n > 65536 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -1007,6 +2354,22 @@ func encFamily(out []byte, v *Family, depth int) []byte {
 		out = append(out, ':', ' ')
 		out = encList(out, v.Components, depth+1, encComponent)
 	}
+	if v.Title != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "title")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Title)
+	}
+	if len(v.Objects) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "objects")
+		out = append(out, ':', ' ')
+		out = encList(out, v.Objects, depth+1, encModelObject)
+	}
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -1031,6 +2394,9 @@ func encModelsSnapshot(out []byte, v *ModelsSnapshot, depth int) []byte {
 }
 
 func encHostState(out []byte, v *HostState, depth int) []byte {
+	if n := len(v.Engines); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -1140,6 +2506,14 @@ func encHostState(out []byte, v *HostState, depth int) []byte {
 		out = esc(out, "availability_cause")
 		out = append(out, ':', ' ')
 		out = esc(out, string(*v.AvailabilityCause))
+	}
+	if len(v.Engines) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "engines")
+		out = append(out, ':', ' ')
+		out = encList(out, v.Engines, depth+1, encEngine)
 	}
 	out = append(out, '\n')
 	out = pad(out, depth)
@@ -1354,6 +2728,9 @@ func encOfferRequest(out []byte, v *OfferRequest, depth int) []byte {
 }
 
 func encOffer(out []byte, v *Offer, depth int) []byte {
+	if n := len(v.Title); n > 128 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
 	out = append(out, '{')
 	out = append(out, '\n')
 	out = pad(out, depth+1)
@@ -1398,6 +2775,14 @@ func encOffer(out []byte, v *Offer, depth int) []byte {
 		out = append(out, ':', ' ')
 		out = strs(out, v.Unknown, depth+1)
 	}
+	if v.Title != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "title")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Title)
+	}
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -1425,6 +2810,464 @@ func encOfferSnapshot(out []byte, v *OfferSnapshot, depth int) []byte {
 	out = esc(out, "outcome")
 	out = append(out, ':', ' ')
 	out = esc(out, v.Outcome.String())
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encOfferObservation(out []byte, v *OfferObservation, depth int) []byte {
+	if n := len(v.Offers); n > 4096 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Cursor); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if !(v.Outcome).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "observation")
+	out = append(out, ':', ' ')
+	out = encObservation(out, &v.Observation, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "offers")
+	out = append(out, ':', ' ')
+	out = encList(out, v.Offers, depth+1, encOffer)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "outcome")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Outcome.String())
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "cursor")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Cursor)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encModalityPage(out []byte, v *ModalityPage, depth int) []byte {
+	if n := len(v.Modalities); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, oaElement := range v.Modalities {
+		if n := len(oaElement); n < 1 || n > 256 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Next); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if !(v.Outcome).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "outcome")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Outcome.String())
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "modalities")
+	out = append(out, ':', ' ')
+	out = strs(out, v.Modalities, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "next")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Next)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "complete")
+	out = append(out, ':', ' ')
+	if v.Complete {
+		out = append(out, 't', 'r', 'u', 'e')
+	} else {
+		out = append(out, 'f', 'a', 'l', 's', 'e')
+	}
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encEndpointRefusalDetail(out []byte, v *EndpointRefusalDetail, depth int) []byte {
+	if depth < 0 || depth >= 64 {
+		panic(&Refusal{Word: "depth_exceeded"})
+	}
+	if n := len(v.Action); n != 0 && (n < 1 || n > 128) {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Question); n != 0 && (n < 1 || n > 128) {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Credential); n != 0 && (n < 1 || n > 64) {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if v.RetryAfterMs < 0 || v.RetryAfterMs > 86400000 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if !(v.Decision).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	if !(v.Ask).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "source")
+	out = append(out, ':', ' ')
+	out = esc(out, string(v.Source))
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "decision")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Decision.String())
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "ask")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Ask.String())
+	if v.Action != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "action")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Action)
+	}
+	if v.Question != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "question")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Question)
+	}
+	if v.Credential != "" {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "credential")
+		out = append(out, ':', ' ')
+		out = esc(out, v.Credential)
+	}
+	if v.RetryAfterMs != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "retry_after_ms")
+		out = append(out, ':', ' ')
+		out = num(out, v.RetryAfterMs)
+	}
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encEndpointProducerCheck(out []byte, v *EndpointProducerCheck, depth int) []byte {
+	if depth < 0 || depth >= 1000 {
+		panic(&Refusal{Word: "depth_exceeded"})
+	}
+	if n := len(v.Kind); n < 1 || n > 128 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Kind {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Copy); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Copy {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Reason); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if !(v.State).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "kind")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Kind)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "copy")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Copy)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "state")
+	out = append(out, ':', ' ')
+	out = esc(out, v.State.String())
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "reason")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Reason)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "checked")
+	out = append(out, ':', ' ')
+	out = esc(out, writeTimestamp(v.Checked))
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encEndpointServiceState(out []byte, v *EndpointServiceState, depth int) []byte {
+	if depth < 0 || depth >= 1000 {
+		panic(&Refusal{Word: "depth_exceeded"})
+	}
+	if n := len(v.Service); n < 1 || n > 128 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Service {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Reason); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Guarantees); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, oaElement := range v.Guarantees {
+		if n := len(oaElement); n < 1 || n > 128 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	for _, oaElement := range v.Guarantees {
+		for _, c := range oaElement {
+			if c < 0x20 || c >= 0x7f && c <= 0x9f {
+				panic(&Refusal{Word: "bad_value", Offset: 0})
+			}
+		}
+	}
+	if n := len(v.Capabilities); n > 32 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for oaElement := range v.Capabilities {
+		if n := len(oaElement); n < 1 || n > 64 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	for oaElement := range v.Capabilities {
+		for _, c := range oaElement {
+			if c < 0x20 || c >= 0x7f && c <= 0x9f {
+				panic(&Refusal{Word: "bad_value", Offset: 0})
+			}
+		}
+	}
+	for _, oaElement := range v.Capabilities {
+		if n := len(oaElement); n > 256 {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.DefinitionHash); n < 71 || n > 71 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.DefinitionHash {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if !(v.Readiness).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "service")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Service)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "readiness")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Readiness.String())
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "reason")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Reason)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "guarantees")
+	out = append(out, ':', ' ')
+	out = strs(out, v.Guarantees, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "capabilities")
+	out = append(out, ':', ' ')
+	out = strmap(out, v.Capabilities, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "definition_hash")
+	out = append(out, ':', ' ')
+	out = esc(out, v.DefinitionHash)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encEndpointDescription(out []byte, v *EndpointDescription, depth int) []byte {
+	if depth < 0 || depth >= 1000 {
+		panic(&Refusal{Word: "depth_exceeded"})
+	}
+	encodedCounter := compactEncodedCounter{start: len(out), pos: len(out)}
+	if n := len(v.Program); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Version); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Services); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if n := len(v.Reason); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			panic(&Refusal{Word: "bad_value", Offset: 0})
+		}
+	}
+	if n := len(v.Checks); n > 64 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	if !(v.Outcome).Known() {
+		panic(&Refusal{Word: "bad_enum", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "outcome")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Outcome.String())
+	encodedCounter.check(out, 1048576)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "program")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Program)
+	encodedCounter.check(out, 1048576)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "version")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Version)
+	encodedCounter.check(out, 1048576)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "services")
+	out = append(out, ':', ' ')
+	out = encList(out, v.Services, depth+1, encEndpointServiceState)
+	encodedCounter.check(out, 1048576)
+	if v.Refusal != nil {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "refusal")
+		out = append(out, ':', ' ')
+		out = encEndpointRefusalDetail(out, v.Refusal, depth+1)
+	}
+	encodedCounter.check(out, 1048576)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "reason")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Reason)
+	encodedCounter.check(out, 1048576)
+	if len(v.Checks) != 0 {
+		out = append(out, ',')
+		out = append(out, '\n')
+		out = pad(out, depth+1)
+		out = esc(out, "checks")
+		out = append(out, ':', ' ')
+		out = encList(out, v.Checks, depth+1, encEndpointProducerCheck)
+	}
+	encodedCounter.check(out, 1048576)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	out = append(out, '}')
+	encodedCounter.check(out, 1048576)
+	return out
+}
+
+func encEndpointDescriptionResult(out []byte, v *EndpointDescriptionResult, depth int) []byte {
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "value")
+	out = append(out, ':', ' ')
+	out = encEndpointDescription(out, &v.Value, depth+1)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encOARouterModalitiesArguments(out []byte, v *oaRouterModalitiesArguments, depth int) []byte {
+	if n := len(v.Cursor); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "cursor")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Cursor)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "limit")
+	out = append(out, ':', ' ')
+	out = num(out, v.Limit)
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -1481,6 +3324,33 @@ func encOARouterOfferArguments(out []byte, v *oaRouterOfferArguments, depth int)
 	out = esc(out, "request")
 	out = append(out, ':', ' ')
 	out = encOfferRequest(out, &v.Request, depth+1)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
+func encOARouterObserveOfferArguments(out []byte, v *oaRouterObserveOfferArguments, depth int) []byte {
+	if n := len(v.Cursor); n > 256 {
+		panic(&Refusal{Word: "bad_value", Offset: 0})
+	}
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "request")
+	out = append(out, ':', ' ')
+	out = encOfferRequest(out, &v.Request, depth+1)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "cursor")
+	out = append(out, ':', ' ')
+	out = esc(out, v.Cursor)
+	out = append(out, ',')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "wait_ms")
+	out = append(out, ':', ' ')
+	out = num(out, v.WaitMs)
 	out = append(out, '\n')
 	out = pad(out, depth)
 	return append(out, '}')
@@ -1574,6 +3444,18 @@ func encOAServiceError(out []byte, v *oaServiceError, depth int) []byte {
 	return append(out, '}')
 }
 
+func encOARouterModalitiesResult(out []byte, v *oaRouterModalitiesResult, depth int) []byte {
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "value")
+	out = append(out, ':', ' ')
+	out = encModalityPage(out, &v.Value, depth+1)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
 func encOARouterModelsResult(out []byte, v *oaRouterModelsResult, depth int) []byte {
 	out = append(out, '{')
 	out = append(out, '\n')
@@ -1622,6 +3504,18 @@ func encOARouterOfferResult(out []byte, v *oaRouterOfferResult, depth int) []byt
 	return append(out, '}')
 }
 
+func encOARouterObserveOfferResult(out []byte, v *oaRouterObserveOfferResult, depth int) []byte {
+	out = append(out, '{')
+	out = append(out, '\n')
+	out = pad(out, depth+1)
+	out = esc(out, "value")
+	out = append(out, ':', ' ')
+	out = encOfferObservation(out, &v.Value, depth+1)
+	out = append(out, '\n')
+	out = pad(out, depth)
+	return append(out, '}')
+}
+
 func Encode(v *PickRequest) []byte {
 	return append(encPickRequest(nil, v, 0), '\n')
 }
@@ -1640,9 +3534,22 @@ func decimal(n int64) string { return string(num(nil, n)) }
 const depthLimit = 64
 
 type reader struct {
-	buf   []byte
-	pos   int
-	depth int
+	buf     []byte
+	pos     int
+	depth   int
+	limit   int
+	ceiling int
+}
+
+func (r *reader) depthLimit() int {
+	ceiling := depthLimit
+	if r.ceiling > 0 {
+		ceiling = r.ceiling
+	}
+	if r.limit > 0 && r.limit < ceiling {
+		return r.limit
+	}
+	return ceiling
 }
 
 func (r *reader) refuse(word string) error { return &Refusal{Word: word, Offset: r.pos} }
@@ -1667,7 +3574,7 @@ func (r *reader) ws() {
 
 func (r *reader) enter() error {
 	r.depth++
-	if r.depth > depthLimit {
+	if r.depth > r.depthLimit() {
 		return r.refuse("depth_exceeded")
 	}
 	return nil
@@ -2105,6 +4012,55 @@ func (r *reader) skipContainer() error {
 	return nil
 }
 
+func (r *reader) strMap() (map[string]string, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	out := map[string]string{}
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			k, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			if _, again := out[k]; again {
+				return nil, r.refuse("duplicate_key")
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			v, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			out[k] = v
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	return out, nil
+}
+
 func decodeList[T any](r *reader, elem func(*reader) (*T, error)) ([]T, error) {
 	if r.at() != '[' {
 		return nil, r.refuse("wrong_type")
@@ -2307,6 +4263,86 @@ func writeTimestamp(s string) string {
 	return result
 }
 
+// TimestampLayout is the contract's UTC timestamp write layout.
+const TimestampLayout = "2006-01-02T15:04:05.000000Z"
+
+// FormatTimestamp returns the contract's UTC timestamp with six fractional digits.
+func FormatTimestamp(at time.Time) string { return at.UTC().Format(TimestampLayout) }
+
+type compactEncodedCounter struct {
+	start, pos, count int
+	quoted, escaped   bool
+}
+
+func (c *compactEncodedCounter) check(out []byte, limit int) {
+	if len(out)-c.start > 1048576 {
+		panic(&Refusal{Word: "encoded_size", Offset: 0})
+	}
+	for ; c.pos < len(out); c.pos++ {
+		b := out[c.pos]
+		if !c.quoted && (b == ' ' || b == '\t' || b == '\r' || b == '\n') {
+			continue
+		}
+		c.count++
+		if c.count > limit {
+			panic(&Refusal{Word: "encoded_size", Offset: 0})
+		}
+		if c.quoted {
+			if c.escaped {
+				c.escaped = false
+			} else if b == '\\' {
+				c.escaped = true
+			} else if b == '"' {
+				c.quoted = false
+			}
+		} else if b == '"' {
+			c.quoted = true
+		}
+	}
+}
+
+func (r *reader) checkEncodedSize(limit int) error {
+	depth, quoted, escaped, count := r.depth, false, false, 0
+	for i := r.pos; i < len(r.buf); i++ {
+		if i-r.pos >= 1048576 {
+			return r.refuse("encoded_size")
+		}
+		c := r.buf[i]
+		if !quoted && (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+			continue
+		}
+		count++
+		if count > limit {
+			return r.refuse("encoded_size")
+		}
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				quoted = false
+			}
+		} else {
+			switch c {
+			case '"':
+				quoted = true
+			case '{', '[':
+				depth++
+				if depth > r.depthLimit() {
+					return r.refuse("depth_exceeded")
+				}
+			case '}', ']':
+				depth--
+				if depth <= r.depth {
+					return nil
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func (r *reader) decodeHostAllowance() (*HostAllowance, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
@@ -2464,6 +4500,7 @@ func (r *reader) decodeCaller() (*Caller, error) {
 	}
 	r.pos++
 	v := &Caller{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2504,6 +4541,13 @@ func (r *reader) decodeCaller() (*Caller, error) {
 				}
 				v.PathDescription = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -2535,6 +4579,7 @@ func (r *reader) decodeObservation() (*Observation, error) {
 	}
 	r.pos++
 	v := &Observation{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2585,6 +4630,13 @@ func (r *reader) decodeObservation() (*Observation, error) {
 				}
 				v.CacheAgeMs = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -2607,6 +4659,238 @@ func (r *reader) decodeObservation() (*Observation, error) {
 	return v, nil
 }
 
+func (r *reader) decodeReasoningSupport() (*ReasoningSupport, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &ReasoningSupport{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "efforts":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				words := make([]ReasoningEffort, len(x))
+				for i, raw := range x {
+					words[i] = ReasoningEffort(raw)
+				}
+				v.Efforts = words
+			case "budget":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.Budget = x
+			case "default_effort":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word := ReasoningEffort(x)
+				v.DefaultEffort = &word
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&1 != 1 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Efforts); n > 8 {
+		return nil, r.refuse("bad_value")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeModelCapabilities() (*ModelCapabilities, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &ModelCapabilities{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "input":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Input = x
+			case "output":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Output = x
+			case "tools":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.Tools = &x
+			case "structured_output":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.StructuredOutput = &x
+			case "reasoning":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.decodeReasoningSupport()
+				if err != nil {
+					return nil, err
+				}
+				v.Reasoning = x
+			case "extensions":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Extensions = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if n := len(v.Input); n > 16 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, oaElement := range v.Input {
+		if n := len(oaElement); n < 1 || n > 256 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Output); n > 16 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, oaElement := range v.Output {
+		if n := len(oaElement); n < 1 || n > 256 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Extensions); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	return v, nil
+}
+
 func (r *reader) decodeAlias() (*Alias, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
@@ -2616,6 +4900,7 @@ func (r *reader) decodeAlias() (*Alias, error) {
 	}
 	r.pos++
 	v := &Alias{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2725,7 +5010,24 @@ func (r *reader) decodeAlias() (*Alias, error) {
 					return nil, err
 				}
 				v.EffectiveContextLength = x
+			case "capabilities":
+				if seen&512 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 512
+				x, err := r.decodeModelCapabilities()
+				if err != nil {
+					return nil, err
+				}
+				v.Capabilities = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -2757,6 +5059,7 @@ func (r *reader) decodeComponent() (*Component, error) {
 	}
 	r.pos++
 	v := &Component{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2807,6 +5110,13 @@ func (r *reader) decodeComponent() (*Component, error) {
 				}
 				v.Name = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -2829,6 +5139,458 @@ func (r *reader) decodeComponent() (*Component, error) {
 	return v, nil
 }
 
+func (r *reader) decodeEngine() (*Engine, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &Engine{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "id":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.ID = x
+			case "name":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Name = x
+			case "version":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Version = x
+			case "source":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Source = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&11 != 11 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.ID); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Name); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Version); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Source); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeModelEngine() (*ModelEngine, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &ModelEngine{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "host":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Host = x
+			case "model":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Model = x
+			case "engine":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Engine = x
+			case "profiles":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Profiles = x
+			case "source":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Source = x
+			case "role":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Role = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&31 != 31 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Host); n > 4096 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Model); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Engine); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Profiles); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, oaElement := range v.Profiles {
+		if n := len(oaElement); n < 1 || n > 256 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Source); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Role); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeModelObject() (*ModelObject, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &ModelObject{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "domain":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Domain = x
+			case "store":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Store = x
+			case "name":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Name = x
+			case "object":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Object = x
+			case "digest":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Digest = x
+			case "format":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Format = x
+			case "architecture":
+				if seen&64 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 64
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Architecture = x
+			case "role":
+				if seen&128 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 128
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Role = x
+			case "engines":
+				if seen&256 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 256
+				x, err := decodeList(r, (*reader).decodeModelEngine)
+				if err != nil {
+					return nil, err
+				}
+				v.Engines = x
+			case "cause":
+				if seen&512 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 512
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Cause = EngineCause(x)
+			case "why":
+				if seen&1024 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1024
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Why = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&1799 != 1799 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Domain); n > 4096 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Store); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Name); n > 4096 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Object); n > 1024 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Digest); n > 135 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Format); n > 128 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Architecture); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Role); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Engines); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Why); n > 4096 {
+		return nil, r.refuse("bad_value")
+	}
+	return v, nil
+}
+
 func (r *reader) decodeFamily() (*Family, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
@@ -2838,6 +5600,7 @@ func (r *reader) decodeFamily() (*Family, error) {
 	}
 	r.pos++
 	v := &Family{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2907,7 +5670,34 @@ func (r *reader) decodeFamily() (*Family, error) {
 					return nil, err
 				}
 				v.Components = x
+			case "title":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Title = x
+			case "objects":
+				if seen&64 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 64
+				x, err := decodeList(r, (*reader).decodeModelObject)
+				if err != nil {
+					return nil, err
+				}
+				v.Objects = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -2927,6 +5717,12 @@ func (r *reader) decodeFamily() (*Family, error) {
 	if seen&3 != 3 {
 		return nil, r.refuse("missing_field")
 	}
+	if n := len(v.Title); n > 128 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Objects); n > 65536 {
+		return nil, r.refuse("bad_value")
+	}
 	return v, nil
 }
 
@@ -2939,6 +5735,7 @@ func (r *reader) decodeModelsSnapshot() (*ModelsSnapshot, error) {
 	}
 	r.pos++
 	v := &ModelsSnapshot{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -2979,6 +5776,13 @@ func (r *reader) decodeModelsSnapshot() (*ModelsSnapshot, error) {
 				}
 				v.Models = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3010,6 +5814,7 @@ func (r *reader) decodeHostState() (*HostState, error) {
 	}
 	r.pos++
 	v := &HostState{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3170,7 +5975,24 @@ func (r *reader) decodeHostState() (*HostState, error) {
 				}
 				word := AvailabilityCause(x)
 				v.AvailabilityCause = &word
+			case "engines":
+				if seen&16384 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16384
+				x, err := decodeList(r, (*reader).decodeEngine)
+				if err != nil {
+					return nil, err
+				}
+				v.Engines = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3190,6 +6012,9 @@ func (r *reader) decodeHostState() (*HostState, error) {
 	if seen&127 != 127 {
 		return nil, r.refuse("missing_field")
 	}
+	if n := len(v.Engines); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
 	return v, nil
 }
 
@@ -3202,6 +6027,7 @@ func (r *reader) decodeAsk() (*Ask, error) {
 	}
 	r.pos++
 	v := &Ask{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3292,6 +6118,13 @@ func (r *reader) decodeAsk() (*Ask, error) {
 				}
 				v.Host = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3323,6 +6156,7 @@ func (r *reader) decodeHostsSnapshot() (*HostsSnapshot, error) {
 	}
 	r.pos++
 	v := &HostsSnapshot{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3383,6 +6217,13 @@ func (r *reader) decodeHostsSnapshot() (*HostsSnapshot, error) {
 				}
 				v.Asked = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3414,6 +6255,7 @@ func (r *reader) decodeDecision() (*Decision, error) {
 	}
 	r.pos++
 	v := &Decision{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3544,6 +6386,13 @@ func (r *reader) decodeDecision() (*Decision, error) {
 				}
 				v.Why = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3575,6 +6424,7 @@ func (r *reader) decodePickResult() (*PickResult, error) {
 	}
 	r.pos++
 	v := &PickResult{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3615,6 +6465,13 @@ func (r *reader) decodePickResult() (*PickResult, error) {
 				}
 				v.Decision = *x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3742,6 +6599,7 @@ func (r *reader) decodeOffer() (*Offer, error) {
 	}
 	r.pos++
 	v := &Offer{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3831,7 +6689,24 @@ func (r *reader) decodeOffer() (*Offer, error) {
 					return nil, err
 				}
 				v.Unknown = x
+			case "title":
+				if seen&128 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 128
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Title = x
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3851,6 +6726,9 @@ func (r *reader) decodeOffer() (*Offer, error) {
 	if seen&63 != 63 {
 		return nil, r.refuse("missing_field")
 	}
+	if n := len(v.Title); n > 128 {
+		return nil, r.refuse("bad_value")
+	}
 	return v, nil
 }
 
@@ -3863,6 +6741,7 @@ func (r *reader) decodeOfferSnapshot() (*OfferSnapshot, error) {
 	}
 	r.pos++
 	v := &OfferSnapshot{}
+	var unknownKeys map[string]bool
 	var seen uint32
 	r.ws()
 	if r.at() != '}' {
@@ -3917,6 +6796,13 @@ func (r *reader) decodeOfferSnapshot() (*OfferSnapshot, error) {
 				}
 				v.Outcome = word
 			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
 				if err := r.skipValue(); err != nil {
 					return nil, err
 				}
@@ -3938,6 +6824,1007 @@ func (r *reader) decodeOfferSnapshot() (*OfferSnapshot, error) {
 	}
 	if !(v.Outcome).Known() {
 		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeOfferObservation() (*OfferObservation, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &OfferObservation{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "observation":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.decodeObservation()
+				if err != nil {
+					return nil, err
+				}
+				v.Observation = *x
+			case "offers":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := decodeList(r, (*reader).decodeOffer)
+				if err != nil {
+					return nil, err
+				}
+				v.Offers = x
+			case "outcome":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseOfferOutcome(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Outcome = word
+			case "cursor":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Cursor = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&15 != 15 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Offers); n > 4096 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Cursor); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if !(v.Outcome).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeModalityPage() (*ModalityPage, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &ModalityPage{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "outcome":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseModalityOutcome(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Outcome = word
+			case "modalities":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Modalities = x
+			case "next":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Next = x
+			case "complete":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.boolean()
+				if err != nil {
+					return nil, err
+				}
+				v.Complete = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&15 != 15 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Modalities); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, oaElement := range v.Modalities {
+		if n := len(oaElement); n < 1 || n > 256 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Next); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if !(v.Outcome).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeEndpointRefusalDetail() (*EndpointRefusalDetail, error) {
+	previousCeiling := r.ceiling
+	defer func() { r.ceiling = previousCeiling }()
+	r.ceiling = 64
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &EndpointRefusalDetail{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "source":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Source = EndpointRefusalSource(x)
+			case "decision":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseEndpointRefusalDecision(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Decision = word
+			case "ask":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseEndpointRefusalAsk(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Ask = word
+			case "action":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Action = x
+			case "question":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Question = x
+			case "credential":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Credential = x
+			case "retry_after_ms":
+				if seen&64 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 64
+				x, err := r.integer(-9223372036854775808, 9223372036854775807)
+				if err != nil {
+					return nil, err
+				}
+				v.RetryAfterMs = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&7 != 7 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Action); n != 0 && (n < 1 || n > 128) {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Question); n != 0 && (n < 1 || n > 128) {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Credential); n != 0 && (n < 1 || n > 64) {
+		return nil, r.refuse("bad_value")
+	}
+	if v.RetryAfterMs < 0 || v.RetryAfterMs > 86400000 {
+		return nil, r.refuse("bad_value")
+	}
+	if !(v.Decision).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	if !(v.Ask).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeEndpointProducerCheck() (*EndpointProducerCheck, error) {
+	previousCeiling := r.ceiling
+	defer func() { r.ceiling = previousCeiling }()
+	r.ceiling = 1000
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &EndpointProducerCheck{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "kind":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Kind = x
+			case "copy":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Copy = x
+			case "state":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseEndpointProducerCheckState(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.State = word
+			case "reason":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Reason = x
+			case "checked":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.timestamp()
+				if err != nil {
+					return nil, err
+				}
+				v.Checked = x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&31 != 31 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Kind); n < 1 || n > 128 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Kind {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Copy); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Copy {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Reason); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if !(v.State).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeEndpointServiceState() (*EndpointServiceState, error) {
+	previousCeiling := r.ceiling
+	defer func() { r.ceiling = previousCeiling }()
+	r.ceiling = 1000
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &EndpointServiceState{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "service":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Service = x
+			case "readiness":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseEndpointServiceReadiness(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Readiness = word
+			case "reason":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Reason = x
+			case "guarantees":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := r.strList()
+				if err != nil {
+					return nil, err
+				}
+				v.Guarantees = x
+			case "capabilities":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.strMap()
+				if err != nil {
+					return nil, err
+				}
+				v.Capabilities = x
+			case "definition_hash":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.DefinitionHash = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&63 != 63 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Service); n < 1 || n > 128 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Service {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Reason); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Guarantees); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, oaElement := range v.Guarantees {
+		if n := len(oaElement); n < 1 || n > 128 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	for _, oaElement := range v.Guarantees {
+		for _, c := range oaElement {
+			if c < 0x20 || c >= 0x7f && c <= 0x9f {
+				return nil, r.refuse("bad_value")
+			}
+		}
+	}
+	if n := len(v.Capabilities); n > 32 {
+		return nil, r.refuse("bad_value")
+	}
+	for oaElement := range v.Capabilities {
+		if n := len(oaElement); n < 1 || n > 64 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	for oaElement := range v.Capabilities {
+		for _, c := range oaElement {
+			if c < 0x20 || c >= 0x7f && c <= 0x9f {
+				return nil, r.refuse("bad_value")
+			}
+		}
+	}
+	for _, oaElement := range v.Capabilities {
+		if n := len(oaElement); n > 256 {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.DefinitionHash); n < 71 || n > 71 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.DefinitionHash {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if !(v.Readiness).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeEndpointDescription() (*EndpointDescription, error) {
+	previousCeiling := r.ceiling
+	defer func() { r.ceiling = previousCeiling }()
+	r.ceiling = 1000
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.checkEncodedSize(1048576); err != nil {
+		return nil, err
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &EndpointDescription{}
+	var unknownKeys map[string]bool
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "outcome":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				word, ok := ParseEndpointDescriptionOutcome(x)
+				if !ok {
+					return nil, r.refuse("bad_enum")
+				}
+				v.Outcome = word
+			case "program":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Program = x
+			case "version":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Version = x
+			case "services":
+				if seen&8 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 8
+				x, err := decodeList(r, (*reader).decodeEndpointServiceState)
+				if err != nil {
+					return nil, err
+				}
+				v.Services = x
+			case "refusal":
+				if seen&16 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 16
+				x, err := r.decodeEndpointRefusalDetail()
+				if err != nil {
+					return nil, err
+				}
+				v.Refusal = x
+			case "reason":
+				if seen&32 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 32
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Reason = x
+			case "checks":
+				if seen&64 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 64
+				x, err := decodeList(r, (*reader).decodeEndpointProducerCheck)
+				if err != nil {
+					return nil, err
+				}
+				v.Checks = x
+			default:
+				if unknownKeys[key] {
+					return nil, r.refuse("duplicate_key")
+				}
+				if unknownKeys == nil {
+					unknownKeys = map[string]bool{}
+				}
+				unknownKeys[key] = true
+				if err := r.skipValue(); err != nil {
+					return nil, err
+				}
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&47 != 47 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Program); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Version); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Services); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if n := len(v.Reason); n > 256 {
+		return nil, r.refuse("bad_value")
+	}
+	for _, c := range v.Reason {
+		if c < 0x20 || c >= 0x7f && c <= 0x9f {
+			return nil, r.refuse("bad_value")
+		}
+	}
+	if n := len(v.Checks); n > 64 {
+		return nil, r.refuse("bad_value")
+	}
+	if !(v.Outcome).Known() {
+		return nil, r.refuse("bad_enum")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeEndpointDescriptionResult() (*EndpointDescriptionResult, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &EndpointDescriptionResult{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "value":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.decodeEndpointDescription()
+				if err != nil {
+					return nil, err
+				}
+				v.Value = *x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&1 != 1 {
+		return nil, r.refuse("missing_field")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeOARouterModalitiesArguments() (*oaRouterModalitiesArguments, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &oaRouterModalitiesArguments{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "cursor":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Cursor = x
+			case "limit":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.integer(-9223372036854775808, 9223372036854775807)
+				if err != nil {
+					return nil, err
+				}
+				v.Limit = x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&3 != 3 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Cursor); n > 256 {
+		return nil, r.refuse("bad_value")
 	}
 	return v, nil
 }
@@ -4174,6 +8061,88 @@ func (r *reader) decodeOARouterOfferArguments() (*oaRouterOfferArguments, error)
 	r.depth--
 	if seen&1 != 1 {
 		return nil, r.refuse("missing_field")
+	}
+	return v, nil
+}
+
+func (r *reader) decodeOARouterObserveOfferArguments() (*oaRouterObserveOfferArguments, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &oaRouterObserveOfferArguments{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "request":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.decodeOfferRequest()
+				if err != nil {
+					return nil, err
+				}
+				v.Request = *x
+			case "cursor":
+				if seen&2 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 2
+				x, err := r.str()
+				if err != nil {
+					return nil, err
+				}
+				v.Cursor = x
+			case "wait_ms":
+				if seen&4 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 4
+				x, err := r.integer(-9223372036854775808, 9223372036854775807)
+				if err != nil {
+					return nil, err
+				}
+				v.WaitMs = x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&7 != 7 {
+		return nil, r.refuse("missing_field")
+	}
+	if n := len(v.Cursor); n > 256 {
+		return nil, r.refuse("bad_value")
 	}
 	return v, nil
 }
@@ -4435,6 +8404,65 @@ func (r *reader) decodeOAServiceError() (*oaServiceError, error) {
 	return v, nil
 }
 
+func (r *reader) decodeOARouterModalitiesResult() (*oaRouterModalitiesResult, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &oaRouterModalitiesResult{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "value":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.decodeModalityPage()
+				if err != nil {
+					return nil, err
+				}
+				v.Value = *x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&1 != 1 {
+		return nil, r.refuse("missing_field")
+	}
+	return v, nil
+}
+
 func (r *reader) decodeOARouterModelsResult() (*oaRouterModelsResult, error) {
 	if r.at() != '{' {
 		return nil, r.refuse("wrong_type")
@@ -4671,6 +8699,65 @@ func (r *reader) decodeOARouterOfferResult() (*oaRouterOfferResult, error) {
 	return v, nil
 }
 
+func (r *reader) decodeOARouterObserveOfferResult() (*oaRouterObserveOfferResult, error) {
+	if r.at() != '{' {
+		return nil, r.refuse("wrong_type")
+	}
+	if err := r.enter(); err != nil {
+		return nil, err
+	}
+	r.pos++
+	v := &oaRouterObserveOfferResult{}
+	var seen uint32
+	r.ws()
+	if r.at() != '}' {
+		for {
+			r.ws()
+			if r.at() != '"' {
+				return nil, r.refuse("malformed")
+			}
+			key, err := r.str()
+			if err != nil {
+				return nil, err
+			}
+			r.ws()
+			if r.at() != ':' {
+				return nil, r.refuse("malformed")
+			}
+			r.pos++
+			r.ws()
+			switch key {
+			case "value":
+				if seen&1 != 0 {
+					return nil, r.refuse("duplicate_field")
+				}
+				seen |= 1
+				x, err := r.decodeOfferObservation()
+				if err != nil {
+					return nil, err
+				}
+				v.Value = *x
+			default:
+				return nil, r.refuse("unknown_field")
+			}
+			r.ws()
+			if r.at() != ',' {
+				break
+			}
+			r.pos++
+		}
+	}
+	if r.at() != '}' {
+		return nil, r.refuse("malformed")
+	}
+	r.pos++
+	r.depth--
+	if seen&1 != 1 {
+		return nil, r.refuse("missing_field")
+	}
+	return v, nil
+}
+
 func Decode(in []byte) (*PickRequest, error) {
 	r := &reader{buf: in}
 	r.ws()
@@ -4685,9 +8772,625 @@ func Decode(in []byte) (*PickRequest, error) {
 	return v, nil
 }
 
+// ToJSON writes one record of this package, given as a value or a pointer,
+// as JSON laid out as its documents are and without the document terminator.
+// Anything else, a nil pointer included, is refused with wrong_type.
+func ToJSON(v any) (out []byte, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			if e, ok := p.(*Refusal); ok {
+				out, err = nil, e
+				return
+			}
+			panic(p)
+		}
+	}()
+	switch v := v.(type) {
+	case HostAllowance:
+		return encHostAllowance(nil, &v, 0), nil
+	case *HostAllowance:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encHostAllowance(nil, v, 0), nil
+	case PickRequest:
+		return encPickRequest(nil, &v, 0), nil
+	case *PickRequest:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encPickRequest(nil, v, 0), nil
+	case Caller:
+		return encCaller(nil, &v, 0), nil
+	case *Caller:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encCaller(nil, v, 0), nil
+	case Observation:
+		return encObservation(nil, &v, 0), nil
+	case *Observation:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encObservation(nil, v, 0), nil
+	case ReasoningSupport:
+		return encReasoningSupport(nil, &v, 0), nil
+	case *ReasoningSupport:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encReasoningSupport(nil, v, 0), nil
+	case ModelCapabilities:
+		return encModelCapabilities(nil, &v, 0), nil
+	case *ModelCapabilities:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encModelCapabilities(nil, v, 0), nil
+	case Alias:
+		return encAlias(nil, &v, 0), nil
+	case *Alias:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encAlias(nil, v, 0), nil
+	case Component:
+		return encComponent(nil, &v, 0), nil
+	case *Component:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encComponent(nil, v, 0), nil
+	case Engine:
+		return encEngine(nil, &v, 0), nil
+	case *Engine:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEngine(nil, v, 0), nil
+	case ModelEngine:
+		return encModelEngine(nil, &v, 0), nil
+	case *ModelEngine:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encModelEngine(nil, v, 0), nil
+	case ModelObject:
+		return encModelObject(nil, &v, 0), nil
+	case *ModelObject:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encModelObject(nil, v, 0), nil
+	case Family:
+		return encFamily(nil, &v, 0), nil
+	case *Family:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encFamily(nil, v, 0), nil
+	case ModelsSnapshot:
+		return encModelsSnapshot(nil, &v, 0), nil
+	case *ModelsSnapshot:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encModelsSnapshot(nil, v, 0), nil
+	case HostState:
+		return encHostState(nil, &v, 0), nil
+	case *HostState:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encHostState(nil, v, 0), nil
+	case Ask:
+		return encAsk(nil, &v, 0), nil
+	case *Ask:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encAsk(nil, v, 0), nil
+	case HostsSnapshot:
+		return encHostsSnapshot(nil, &v, 0), nil
+	case *HostsSnapshot:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encHostsSnapshot(nil, v, 0), nil
+	case Decision:
+		return encDecision(nil, &v, 0), nil
+	case *Decision:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encDecision(nil, v, 0), nil
+	case PickResult:
+		return encPickResult(nil, &v, 0), nil
+	case *PickResult:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encPickResult(nil, v, 0), nil
+	case OfferRequest:
+		return encOfferRequest(nil, &v, 0), nil
+	case *OfferRequest:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encOfferRequest(nil, v, 0), nil
+	case Offer:
+		return encOffer(nil, &v, 0), nil
+	case *Offer:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encOffer(nil, v, 0), nil
+	case OfferSnapshot:
+		return encOfferSnapshot(nil, &v, 0), nil
+	case *OfferSnapshot:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encOfferSnapshot(nil, v, 0), nil
+	case OfferObservation:
+		return encOfferObservation(nil, &v, 0), nil
+	case *OfferObservation:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encOfferObservation(nil, v, 0), nil
+	case ModalityPage:
+		return encModalityPage(nil, &v, 0), nil
+	case *ModalityPage:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encModalityPage(nil, v, 0), nil
+	case EndpointRefusalDetail:
+		return encEndpointRefusalDetail(nil, &v, 0), nil
+	case *EndpointRefusalDetail:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEndpointRefusalDetail(nil, v, 0), nil
+	case EndpointProducerCheck:
+		return encEndpointProducerCheck(nil, &v, 0), nil
+	case *EndpointProducerCheck:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEndpointProducerCheck(nil, v, 0), nil
+	case EndpointServiceState:
+		return encEndpointServiceState(nil, &v, 0), nil
+	case *EndpointServiceState:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEndpointServiceState(nil, v, 0), nil
+	case EndpointDescription:
+		return encEndpointDescription(nil, &v, 0), nil
+	case *EndpointDescription:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEndpointDescription(nil, v, 0), nil
+	case EndpointDescriptionResult:
+		return encEndpointDescriptionResult(nil, &v, 0), nil
+	case *EndpointDescriptionResult:
+		if v == nil {
+			return nil, &Refusal{Word: "wrong_type"}
+		}
+		return encEndpointDescriptionResult(nil, v, 0), nil
+	}
+	return nil, &Refusal{Word: "wrong_type"}
+}
+
+// FromJSON reads one record from data into v, a pointer to a record of this
+// package. A refused input returns *Refusal.
+func FromJSON(data []byte, v any) error {
+	r := &reader{buf: data}
+	r.ws()
+	switch p := v.(type) {
+	case *HostAllowance:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeHostAllowance()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *PickRequest:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodePickRequest()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Caller:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeCaller()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Observation:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeObservation()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ReasoningSupport:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeReasoningSupport()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ModelCapabilities:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeModelCapabilities()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Alias:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeAlias()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Component:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeComponent()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Engine:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEngine()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ModelEngine:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeModelEngine()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ModelObject:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeModelObject()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Family:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeFamily()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ModelsSnapshot:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeModelsSnapshot()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *HostState:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeHostState()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Ask:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeAsk()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *HostsSnapshot:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeHostsSnapshot()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Decision:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeDecision()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *PickResult:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodePickResult()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *OfferRequest:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeOfferRequest()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *Offer:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeOffer()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *OfferSnapshot:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeOfferSnapshot()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *OfferObservation:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeOfferObservation()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *ModalityPage:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeModalityPage()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *EndpointRefusalDetail:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEndpointRefusalDetail()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *EndpointProducerCheck:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEndpointProducerCheck()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *EndpointServiceState:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEndpointServiceState()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *EndpointDescription:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEndpointDescription()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	case *EndpointDescriptionResult:
+		if p == nil {
+			return &Refusal{Word: "wrong_type"}
+		}
+		x, err := r.decodeEndpointDescriptionResult()
+		if err != nil {
+			return err
+		}
+		r.ws()
+		if r.pos < len(r.buf) {
+			return r.refuse("trailing_bytes")
+		}
+		*p = *x
+		return nil
+	}
+	return &Refusal{Word: "wrong_type"}
+}
+
 // refusals is in the order two of them are chosen between.
 
-var refusals = []string{"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"}
+var refusals = []string{"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "bad_value", "trailing_bytes"}
 
 func refusalRank(word string) int {
 	for i, w := range refusals {
@@ -4816,6 +9519,7 @@ func serviceReply(v *oaServiceFrame, payload Raw, err error) (frame []byte, outE
 // EndpointContract is abstraction.facade/endpoint@1, which every dispatcher
 // answers beside its own service.
 const EndpointContract = "abstraction.facade/endpoint@1"
+const EndpointV2Contract = "abstraction.facade/endpoint@2"
 
 // DescribedService is a dispatcher of any generated package, as
 // abstraction.facade/endpoint@1 Describe lists it.
@@ -4828,11 +9532,17 @@ type DescribedService interface {
 // provider's own display name and version, never authority. A frame for another
 // service reads unknown_service.
 func DescribeEndpoint(frame []byte, program, version string, services ...DescribedService) ([]byte, error) {
+	return DescribeEndpointWithChecks(frame, program, version, nil, services...)
+}
+
+// DescribeEndpointWithChecks projects already captured producer observations.
+// It performs no verification, reconciliation or readiness inference.
+func DescribeEndpointWithChecks(frame []byte, program, version string, checks []EndpointProducerCheck, services ...DescribedService) ([]byte, error) {
 	v, err := servicePayload(frame)
 	if err != nil {
 		return nil, err
 	}
-	if v.Service != EndpointContract {
+	if v.Service != EndpointContract && v.Service != EndpointV2Contract {
 		return serviceReply(v, "", DispatchError("unknown_service"))
 	}
 	if v.Method != "Describe" {
@@ -4852,6 +9562,9 @@ func DescribeEndpoint(frame []byte, program, version string, services ...Describ
 	}
 	if !empty {
 		return serviceReply(v, "", &Refusal{Word: "unknown_field"})
+	}
+	if v.Service == EndpointV2Contract {
+		return describeEndpointV2(v, program, version, checks, services...)
 	}
 	out := append([]byte(nil), "{\"value\":{\"outcome\":\"described\",\"program\":"...)
 	out = esc(out, program)
@@ -4913,16 +9626,21 @@ type ServedService interface {
 // frame goes to the service it names. A service that takes only one-way frames
 // reads wrong_mode, and a frame naming none of them reads unknown_service.
 func ServeEndpoint(frame []byte, program, version string, services ...ServedService) ([]byte, error) {
+	return ServeEndpointWithChecks(frame, program, version, nil, services...)
+}
+
+// ServeEndpointWithChecks supplies one program-level observation list.
+func ServeEndpointWithChecks(frame []byte, program, version string, checks []EndpointProducerCheck, services ...ServedService) ([]byte, error) {
 	v, err := servicePayload(frame)
 	if err != nil {
 		return nil, err
 	}
-	if v.Service == EndpointContract {
+	if v.Service == EndpointContract || v.Service == EndpointV2Contract {
 		described := make([]DescribedService, len(services))
 		for i, service := range services {
 			described[i] = service
 		}
-		return DescribeEndpoint(frame, program, version, described...)
+		return DescribeEndpointWithChecks(frame, program, version, checks, described...)
 	}
 	for _, service := range services {
 		if service.ServiceContract() != v.Service {
@@ -4936,11 +9654,145 @@ func ServeEndpoint(frame []byte, program, version string, services ...ServedServ
 	return serviceReply(v, "", DispatchError("unknown_service"))
 }
 
+func describeEndpointV2(v *oaServiceFrame, program, version string, checks []EndpointProducerCheck, services ...DescribedService) (out []byte, err error) {
+	bounded := func() ([]byte, error) {
+		description := EndpointDescription{Outcome: EndpointDescriptionOutcomeUnavailable, Reason: "bound:reply_bytes"}
+		payload := encEndpointDescriptionResult(nil, &EndpointDescriptionResult{Value: description}, 1)
+		return serviceReply(v, Raw(payload), nil)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			if _, ok := p.(*Refusal); ok {
+				out, err = bounded()
+				return
+			}
+			panic(p)
+		}
+	}()
+	description := EndpointDescription{Outcome: EndpointDescriptionOutcomeDescribed, Program: program, Version: version, Checks: checks}
+	for _, service := range services {
+		contract, ready, why := service.DescribeService()
+		readiness := EndpointServiceReadinessNotReady
+		if ready {
+			readiness = EndpointServiceReadinessReady
+			why = ""
+		}
+		state := EndpointServiceState{Service: contract, Readiness: readiness, Reason: why}
+		if metadata, ok := service.(interface {
+			DescribeServiceMetadata() ([]string, map[string]string)
+		}); ok {
+			state.Guarantees, state.Capabilities = metadata.DescribeServiceMetadata()
+		}
+		if hashed, ok := service.(interface{ DescribeServiceDefinitionHash() string }); ok {
+			state.DefinitionHash = hashed.DescribeServiceDefinitionHash()
+		} else {
+			description = EndpointDescription{Outcome: EndpointDescriptionOutcomeUnsupported, Reason: "unsupported:not_implemented"}
+			break
+		}
+		description.Services = append(description.Services, state)
+	}
+	payload := encEndpointDescriptionResult(nil, &EndpointDescriptionResult{Value: description}, 1)
+	r := &reader{buf: payload, depth: 1}
+	if _, err := r.decodeEndpointDescriptionResult(); err != nil {
+		return bounded()
+	}
+	out, err = serviceReply(v, Raw(payload), nil)
+	if err == nil && len(out) > 1048576 {
+		return bounded()
+	}
+	return out, err
+}
+
+// ServeEndpointRemote admits a validated request before its selected handler.
+// The receiving runtime supplies trusted services and the live authority check.
+// Missing metadata is local. This helper grants no authority and retries nothing.
+func ServeEndpointRemote(frame []byte, program, version string, admit func(contract, method, profile string) error, services ...ServedService) ([]byte, error) {
+	v, err := servicePayload(frame)
+	if err != nil {
+		return nil, err
+	}
+	authorize := func(profile string) (err error) {
+		switch profile {
+		case "see", "call", "delegate":
+		case "person":
+			return &ServiceError{Code: "forbidden", Message: "remote:person_only"}
+		default:
+			return &ServiceError{Code: "unsupported", Message: "remote:local_only"}
+		}
+		if admit == nil {
+			return &ServiceError{Code: "forbidden", Message: "remote admission required"}
+		}
+		defer func() {
+			if recover() != nil {
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
+			}
+		}()
+		return admit(v.Service, v.Method, profile)
+	}
+	if v.Service == EndpointContract || v.Service == EndpointV2Contract {
+		if v.Method != "Describe" {
+			return serviceReply(v, "", DispatchError("unknown_method"))
+		}
+		profile := "local"
+		selected := false
+		for _, service := range services {
+			if service.ServiceContract() == v.Service {
+				profile = RemoteMethodProfile(service, v.Service, v.Method)
+				selected = true
+				break
+			}
+		}
+
+		_ = selected
+		if err := authorize(profile); err != nil {
+			return serviceReply(v, "", err)
+		}
+		described := make([]DescribedService, len(services))
+		for i, service := range services {
+			described[i] = service
+		}
+		return DescribeEndpoint(frame, program, version, described...)
+	}
+	for _, service := range services {
+		if service.ServiceContract() != v.Service {
+			continue
+		}
+		exchanger, ok := service.(interface{ ExchangeFrame([]byte) ([]byte, error) })
+		if !ok {
+			return serviceReply(v, "", DispatchError("wrong_mode"))
+		}
+		if err := authorize(RemoteMethodProfile(service, v.Service, v.Method)); err != nil {
+			return serviceReply(v, "", err)
+		}
+		return exchanger.ExchangeFrame(frame)
+	}
+	return serviceReply(v, "", DispatchError("unknown_service"))
+}
+
+// RemoteMethodProfile reads generated dispatch metadata. Missing or unknown metadata is local.
+// The profile grants no authority and promises no retry safety.
+func RemoteMethodProfile(service interface{}, contract, method string) string {
+	if provider, ok := service.(interface {
+		RemoteMethodProfile(string, string) (string, bool)
+	}); ok {
+		profile, known := provider.RemoteMethodProfile(contract, method)
+		if known {
+			switch profile {
+			case "local", "see", "call", "delegate", "person":
+				return profile
+			}
+		}
+	}
+	return "local"
+}
+
 type Router interface {
+	Modalities(cursor string, limit int64) (ModalityPage, error)
 	Models(fresh bool) (ModelsSnapshot, error)
 	Hosts(fresh bool) (HostsSnapshot, error)
 	Pick(request PickRequest) (PickResult, error)
 	Offer(request OfferRequest) (OfferSnapshot, error)
+	ObserveOffer(request OfferRequest, cursor string, waitMs int64) (OfferObservation, error)
 }
 type RouterTransport interface {
 	FrameExchanger
@@ -4951,6 +9803,74 @@ func NewRouterClient(t RouterTransport) *RouterClient { return &RouterClient{tra
 
 type RouterDispatcher struct{ Handler Router }
 
+func (d *RouterDispatcher) RemoteMethodProfile(contract, method string) (string, bool) {
+	if contract == "abstraction.facade/endpoint@1" && method == "Describe" {
+		return "see", true
+	}
+	if contract == "abstraction.facade/endpoint@2" && method == "Describe" {
+		return "see", true
+	}
+	if contract != d.ServiceContract() {
+		return "local", false
+	}
+	switch method {
+	case "Modalities":
+		return "see", true
+	case "Models":
+		return "see", true
+	case "Hosts":
+		return "see", true
+	case "Pick":
+		return "see", true
+	case "Offer":
+		return "see", true
+	case "ObserveOffer":
+		return "see", true
+	}
+	return "local", false
+}
+func (c *RouterClient) Modalities(cursor string, limit int64) (result ModalityPage, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			if e, ok := p.(*Refusal); ok {
+				err = e
+			} else {
+				panic(p)
+			}
+		}
+	}()
+	args := oaRouterModalitiesArguments{Cursor: cursor, Limit: limit}
+	v := oaServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "Modalities", Arguments: Raw(encOARouterModalitiesArguments(nil, &args, 1))}
+	frame := encOAServiceFrame(nil, &v, 0)
+	if _, err = servicePayload(frame); err != nil {
+		return
+	}
+	var response []byte
+	response, err = c.transport.ExchangeFrame(frame)
+	if err != nil {
+		return
+	}
+	var payload Raw
+	payload, err = serviceResponse(response, v.Service, v.Method)
+	if err != nil {
+		return
+	}
+	r := &reader{buf: []byte(payload), depth: 1}
+	r.ws()
+	var decoded *oaRouterModalitiesResult
+	decoded, err = r.decodeOARouterModalitiesResult()
+	if err != nil {
+		return
+	}
+	_ = decoded
+	r.ws()
+	if r.pos != len(r.buf) {
+		err = r.refuse("trailing_bytes")
+		return
+	}
+	result = decoded.Value
+	return
+}
 func (c *RouterClient) Models(fresh bool) (result ModelsSnapshot, err error) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -5119,6 +10039,48 @@ func (c *RouterClient) Offer(request OfferRequest) (result OfferSnapshot, err er
 	result = decoded.Value
 	return
 }
+func (c *RouterClient) ObserveOffer(request OfferRequest, cursor string, waitMs int64) (result OfferObservation, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			if e, ok := p.(*Refusal); ok {
+				err = e
+			} else {
+				panic(p)
+			}
+		}
+	}()
+	args := oaRouterObserveOfferArguments{Request: request, Cursor: cursor, WaitMs: waitMs}
+	v := oaServiceFrame{Version: 1, Service: "abstraction.router/router@1", Method: "ObserveOffer", Arguments: Raw(encOARouterObserveOfferArguments(nil, &args, 1))}
+	frame := encOAServiceFrame(nil, &v, 0)
+	if _, err = servicePayload(frame); err != nil {
+		return
+	}
+	var response []byte
+	response, err = c.transport.ExchangeFrame(frame)
+	if err != nil {
+		return
+	}
+	var payload Raw
+	payload, err = serviceResponse(response, v.Service, v.Method)
+	if err != nil {
+		return
+	}
+	r := &reader{buf: []byte(payload), depth: 1}
+	r.ws()
+	var decoded *oaRouterObserveOfferResult
+	decoded, err = r.decodeOARouterObserveOfferResult()
+	if err != nil {
+		return
+	}
+	_ = decoded
+	r.ws()
+	if r.pos != len(r.buf) {
+		err = r.refuse("trailing_bytes")
+		return
+	}
+	result = decoded.Value
+	return
+}
 
 // DescribeService is this dispatcher's service as abstraction.facade/endpoint@1 Describe lists it:
 // ready unless its handler implements Ready() (bool, string) and reports otherwise.
@@ -5145,6 +10107,11 @@ func (d *RouterDispatcher) DescribeServiceMetadata() (guarantees []string, capab
 
 // ServiceContract is the wire name ServeEndpoint routes this dispatcher's frames by.
 func (d *RouterDispatcher) ServiceContract() string { return "abstraction.router/router@1" }
+
+// DescribeServiceDefinitionHash is gen --hash over the canonical service definition.
+func (d *RouterDispatcher) DescribeServiceDefinitionHash() string {
+	return "sha256:8a9045daebcf3d01392413bf80f4b023134004c28aac079a74dfd5140c73c47d"
+}
 func (d *RouterDispatcher) WriteFrame(frame []byte) error {
 	v, err := servicePayload(frame)
 	if err != nil {
@@ -5154,6 +10121,8 @@ func (d *RouterDispatcher) WriteFrame(frame []byte) error {
 		return DispatchError("unknown_service")
 	}
 	switch v.Method {
+	case "Modalities":
+		return DispatchError("wrong_mode")
 	case "Models":
 		return DispatchError("wrong_mode")
 	case "Hosts":
@@ -5161,6 +10130,8 @@ func (d *RouterDispatcher) WriteFrame(frame []byte) error {
 	case "Pick":
 		return DispatchError("wrong_mode")
 	case "Offer":
+		return DispatchError("wrong_mode")
+	case "ObserveOffer":
 		return DispatchError("wrong_mode")
 	default:
 		return DispatchError("unknown_method")
@@ -5174,10 +10145,26 @@ func (d *RouterDispatcher) ExchangeFrame(frame []byte) ([]byte, error) {
 	if v.Service == EndpointContract {
 		return DescribeEndpoint(frame, "", "", d)
 	}
+	if v.Service == EndpointV2Contract {
+		return DescribeEndpoint(frame, "", "", d)
+	}
 	if v.Service != "abstraction.router/router@1" {
 		return serviceReply(v, "", DispatchError("unknown_service"))
 	}
 	switch v.Method {
+	case "Modalities":
+		r := &reader{buf: []byte(v.Arguments), depth: 1}
+		r.ws()
+		args, err := r.decodeOARouterModalitiesArguments()
+		if err != nil {
+			return serviceReply(v, "", err)
+		}
+		r.ws()
+		if r.pos != len(r.buf) {
+			return serviceReply(v, "", r.refuse("trailing_bytes"))
+		}
+		payload, err := d.invokeModalities(args)
+		return serviceReply(v, payload, err)
 	case "Models":
 		r := &reader{buf: []byte(v.Arguments), depth: 1}
 		r.ws()
@@ -5230,9 +10217,54 @@ func (d *RouterDispatcher) ExchangeFrame(frame []byte) ([]byte, error) {
 		}
 		payload, err := d.invokeOffer(args)
 		return serviceReply(v, payload, err)
+	case "ObserveOffer":
+		r := &reader{buf: []byte(v.Arguments), depth: 1}
+		r.ws()
+		args, err := r.decodeOARouterObserveOfferArguments()
+		if err != nil {
+			return serviceReply(v, "", err)
+		}
+		r.ws()
+		if r.pos != len(r.buf) {
+			return serviceReply(v, "", r.refuse("trailing_bytes"))
+		}
+		payload, err := d.invokeObserveOffer(args)
+		return serviceReply(v, payload, err)
 	default:
 		return serviceReply(v, "", DispatchError("unknown_method"))
 	}
+}
+func (d *RouterDispatcher) invokeModalities(args *oaRouterModalitiesArguments) (payload Raw, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			payload = ""
+			if _, ok := p.(*Refusal); ok {
+				err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+			} else {
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
+			}
+		}
+	}()
+	var result ModalityPage
+	result, err = d.Handler.Modalities(args.Cursor, args.Limit)
+	if err != nil {
+		return
+	}
+	value := oaRouterModalitiesResult{Value: result}
+	payload = Raw(encOARouterModalitiesResult(nil, &value, 1))
+	r := &reader{buf: []byte(payload), depth: 1}
+	r.ws()
+	if _, e := r.decodeOARouterModalitiesResult(); e != nil {
+		payload = ""
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+		return
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		payload = ""
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+	}
+	return
 }
 func (d *RouterDispatcher) invokeModels(args *oaRouterModelsArguments) (payload Raw, err error) {
 	defer func() {
@@ -5351,6 +10383,38 @@ func (d *RouterDispatcher) invokeOffer(args *oaRouterOfferArguments) (payload Ra
 	r := &reader{buf: []byte(payload), depth: 1}
 	r.ws()
 	if _, e := r.decodeOARouterOfferResult(); e != nil {
+		payload = ""
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+		return
+	}
+	r.ws()
+	if r.pos != len(r.buf) {
+		payload = ""
+		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+	}
+	return
+}
+func (d *RouterDispatcher) invokeObserveOffer(args *oaRouterObserveOfferArguments) (payload Raw, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			payload = ""
+			if _, ok := p.(*Refusal); ok {
+				err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
+			} else {
+				err = &ServiceError{Code: ServiceErrorCodeHandlerError, Message: "handler failed"}
+			}
+		}
+	}()
+	var result OfferObservation
+	result, err = d.Handler.ObserveOffer(args.Request, args.Cursor, args.WaitMs)
+	if err != nil {
+		return
+	}
+	value := oaRouterObserveOfferResult{Value: result}
+	payload = Raw(encOARouterObserveOfferResult(nil, &value, 1))
+	r := &reader{buf: []byte(payload), depth: 1}
+	r.ws()
+	if _, e := r.decodeOARouterObserveOfferResult(); e != nil {
 		payload = ""
 		err = &ServiceError{Code: ServiceErrorCodeInvalidResult}
 		return

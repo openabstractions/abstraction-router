@@ -8,21 +8,21 @@ interface FrameTransport {
   writeFrame(frame: Uint8Array): Promise<void>;
 }
 
-// hosted is true for a name read from a hosted host's model listing; such a
-// name is never resident. profiles are what the host's own model metadata says
-// this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply. held_in names the
-// storage inventory stores holding an object this alias's own name or digest
-// matches, in store order; empty when no store's object matches this name. host
-// is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's maximum supported
-// context window in tokens, read from host metadata without loading it (LM
-// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-// max_context_window); zero when the host reports none.
-// effective_context_length is a positive per-request context limit the host
-// currently reports: the loaded value when the model is resident, otherwise its
-// configured value when the host reports one (Lemonade's context_length); zero
-// when unknown. A nonpositive or contradictory effective value is omitted.
+// [Alias](https://openabstractions.github.io/reference.html#concept-router.alias):
+// capabilities are this alias's own on its host, never merged with the same
+// family on another host. hosted is true for a name read from a hosted host's
+// model listing; such a name is never resident. profiles are what the host's
+// own model metadata says this name serves; empty when the host reports none,
+// and then its HostState profiles apply. held_in names the storage inventory
+// stores holding an object this alias's own name or digest matches, in store
+// order; empty when no store's object matches this name. host is empty exactly
+// for a name no host serves, which a store holds and which is never resident or
+// servable. context_length is the model's maximum supported context window in
+// tokens, read from host metadata without loading it; zero when the host
+// reports none. effective_context_length is a positive per-request context
+// limit the host currently reports: the loaded value when the model is
+// resident, otherwise its configured value when the host reports one; zero when
+// unknown. A nonpositive or contradictory effective value is omitted.
 export interface Alias {
   host: string;
   name: string;
@@ -33,6 +33,7 @@ export interface Alias {
   heldIn: string[];
   contextLength: bigint;
   effectiveContextLength: bigint;
+  capabilities: ModelCapabilities | null;
 }
 
 export interface Ask {
@@ -48,16 +49,23 @@ export interface Ask {
 export type AvailabilityCause = (typeof AvailabilityCause)[keyof typeof AvailabilityCause];
 export declare const AvailabilityCause: Readonly<{ TransportUnavailable: "transport_unavailable"; Credential: "credential"; Rights: "rights"; Configuration: "configuration"; Malformed: "malformed"; Unknown: "unknown"; Other: "other" }>;
 
+// [Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description).
+// Diagnostic user and path descriptions observed by the server. They are
+// display information, not stable identifiers, filesystem paths or
+// authorization proof, and are never accepted as request claims.
 export interface Caller {
   userDescription: string;
   pathDescription: string;
 }
 
-// One role-bearing object a store holds, folded into a family's detail rather
-// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
-// store is the holder, role is projector, vae, or another value a storage
-// inventory source's descriptor names, and name is the store's own name for the
-// object when it named one.
+// One [role-bearing
+// object](https://openabstractions.github.io/reference.html#concept-model-identity.component)
+// a store holds, folded into a
+// [family](https://openabstractions.github.io/reference.html#concept-model.family-identity)'s
+// detail rather than listed as a family of its own
+// (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is
+// projector, vae, or another value a storage inventory source's descriptor
+// names, and name is the store's own name for the object when it named one.
 export interface Component {
   store: string;
   role: string;
@@ -86,6 +94,21 @@ export declare class DispatchError extends Error {
   code: string;
 }
 
+// The provider's selected program loading weights (vocabulary D12), identified
+// within its host and registration generation. Version is omitted when
+// unreported. Source is display provenance, never an executable path or
+// authority claim.
+export interface Engine {
+  id: string;
+  name: string;
+  version: string;
+  source: string;
+}
+
+export type EngineCause = (typeof EngineCause)[keyof typeof EngineCause];
+export declare const EngineCause: Readonly<{ Bound: "bound"; SourceOnly: "source_only"; Incompatible: "incompatible"; Unknown: "unknown"; Other: "other" }>;
+
+// [Family](https://openabstractions.github.io/reference.html#concept-router.family-catalogue):
 // names lists one alias per server and name; a name two servers serve appears
 // twice, once per server. held_in names the storage inventory stores holding an
 // object of this family, in store order, whether or not a host serves it; empty
@@ -99,13 +122,17 @@ export declare class DispatchError extends Error {
 // it, an object that is this family's only content — held_in and
 // family_source cover the family it was folded into or the family it stands in
 // for either way; components exists to say the family answers for a part, not a
-// whole model, when that is what it is.
+// whole model, when that is what it is. title is the model catalogue's display
+// name for the family, empty when none is known; it is shown to people and
+// never asked for.
 export interface Family {
   family: string;
   names: Alias[];
   heldIn: string[];
   familySource: string;
   components: Component[];
+  title: string;
+  objects: ModelObject[];
 }
 
 export interface HostAllowance {
@@ -142,6 +169,7 @@ export interface HostState {
   profiles: string[];
   domain: string;
   availabilityCause: AvailabilityCause | (string & {}) | null;
+  engines: Engine[];
 }
 
 export interface HostsSnapshot {
@@ -149,6 +177,98 @@ export interface HostsSnapshot {
   hosts: HostState[];
   doubled: string[];
   asked: Ask[];
+}
+
+// JsonRecords maps each record name toJson and fromJson take to its type.
+export interface JsonRecords {
+  HostAllowance: HostAllowance;
+  PickRequest: PickRequest;
+  Caller: Caller;
+  Observation: Observation;
+  ReasoningSupport: ReasoningSupport;
+  ModelCapabilities: ModelCapabilities;
+  Alias: Alias;
+  Component: Component;
+  Engine: Engine;
+  ModelEngine: ModelEngine;
+  ModelObject: ModelObject;
+  Family: Family;
+  ModelsSnapshot: ModelsSnapshot;
+  HostState: HostState;
+  Ask: Ask;
+  HostsSnapshot: HostsSnapshot;
+  Decision: Decision;
+  PickResult: PickResult;
+  OfferRequest: OfferRequest;
+  Offer: Offer;
+  OfferSnapshot: OfferSnapshot;
+  OfferObservation: OfferObservation;
+  ModalityPage: ModalityPage;
+}
+
+export type ModalityOutcome = (typeof ModalityOutcome)[keyof typeof ModalityOutcome];
+export declare const ModalityOutcome: Readonly<{ Page: "page"; Gap: "gap"; Invalid: "invalid"; Forbidden: "forbidden"; Unavailable: "unavailable"; NotPermitted: "not_permitted" }>;
+
+// page carries at most 64 distinct modality IDs, each at most 256 UTF-8 bytes,
+// in UTF-8 byte order. next is an opaque cursor of at most 256 bytes, empty
+// exactly when complete. The catalogue contains the seed modalities and valid
+// current registered host declarations, independently of model availability.
+// Other outcomes carry no modalities, an empty next and complete false. gap
+// requires restarting with an empty cursor.
+export interface ModalityPage {
+  outcome: ModalityOutcome;
+  modalities: string[];
+  next: string;
+  complete: boolean;
+}
+
+// What one alias on its host takes and gives: input and output modalities
+// (text, image, audio, video), tool calls, structured output, its reasoning
+// controls and the chat@3 extension names it supports. Sources in order: the
+// catalogue entry for the model, then the engine's own facts (a loaded vision
+// projector, the chat template's tool section), then the hosted provider's
+// model listing. A fact no source states is absent, never guessed. Display
+// data; it grants nothing.
+export interface ModelCapabilities {
+  input: string[];
+  output: string[];
+  tools: boolean | undefined;
+  structuredOutput: boolean | undefined;
+  reasoning: ReasoningSupport | null;
+  extensions: string[];
+}
+
+// An explicit configured content-object-to-engine association from the accepted
+// provider registration or recipe. It asserts neither general format acceptance
+// nor readiness, and is separate from the client/service binding and actual
+// inference-route record.
+export interface ModelEngine {
+  host: string;
+  model: string;
+  engine: string;
+  profiles: string[];
+  source: string;
+  role: string;
+}
+
+// One storage content object projected with its source's model facts. Domain is
+// empty locally; object is an opaque source ID and digest requires inventory
+// evidence. A collection manifest is never one object. Missing identity or
+// descriptor facts remain unknown. Existing Component retains the logical
+// role/base-family relation. Why is plain display text, never parsed. Clients
+// never display digest as page text.
+export interface ModelObject {
+  domain: string;
+  store: string;
+  name: string;
+  object: string;
+  digest: string;
+  format: string;
+  architecture: string;
+  role: string;
+  engines: ModelEngine[];
+  cause: EngineCause | (string & {});
+  why: string;
 }
 
 export interface ModelsSnapshot {
@@ -171,7 +291,8 @@ export interface Observation {
 // when a counted server fixes its window at load and reported none, none for a
 // profile without a context window. input is context minus the request's
 // reserve, 0 when nothing remains or context is 0. unknown names the aliases
-// whose server reported no usable request limit, as <server>/<name>.
+// whose server reported no usable request limit, as <server>/<name>. title is
+// the family's display name as in Family.
 export interface Offer {
   family: string;
   names: string[];
@@ -180,6 +301,19 @@ export interface Offer {
   contextSource: ContextSource | (string & {});
   input: bigint;
   unknown: string[];
+  title: string;
+}
+
+// One long-poll Offer reading. Exactly offered carries observation, offers and
+// cursor, a digest of the offers; it answers once that digest differs from the
+// cursor given, or when wait_ms ends. Every refusal carries an empty
+// observation, no offers and an empty cursor; it makes no model availability
+// claim.
+export interface OfferObservation {
+  observation: Observation;
+  offers: Offer[];
+  outcome: OfferOutcome;
+  cursor: string;
 }
 
 export type OfferOutcome = (typeof OfferOutcome)[keyof typeof OfferOutcome];
@@ -221,15 +355,30 @@ export interface PickResult {
 export type Placement = (typeof Placement)[keyof typeof Placement];
 export declare const Placement: Readonly<{ Local: "local"; Hosted: "hosted"; Any: "any" }>;
 
+export type ReasoningEffort = (typeof ReasoningEffort)[keyof typeof ReasoningEffort];
+export declare const ReasoningEffort: Readonly<{ None: "none"; Low: "low"; Medium: "medium"; High: "high" }>;
+
+// The reasoning controls a model takes. efforts are the chat@3 effort words it
+// answers to, approximated ones included; budget is true when it also takes a
+// reasoning token budget; default_effort is what it reasons at when the caller
+// names none.
+export interface ReasoningSupport {
+  efforts: Array<ReasoningEffort | (string & {})>;
+  budget: boolean;
+  defaultEffort: ReasoningEffort | (string & {}) | null;
+}
+
 export declare class Refusal extends Error {
   constructor(word: string, offset: number);
-  word: "malformed" | "bad_string" | "number_spelling" | "wrong_type" | "bad_timestamp" | "depth_exceeded" | "duplicate_key" | "duplicate_field" | "unknown_field" | "missing_field" | "bad_enum" | "trailing_bytes";
+  word: "malformed" | "bad_string" | "number_spelling" | "wrong_type" | "bad_timestamp" | "depth_exceeded" | "duplicate_key" | "duplicate_field" | "unknown_field" | "missing_field" | "bad_enum" | "bad_value" | "trailing_bytes";
   offset: number;
 }
 
 /** Read existing model hosts and choose where a caller may ask. Decisions do not enforce access to hosts outside the router. */
 export declare class RouterClient {
   constructor(transport: FrameTransport);
+  /** Read the modality catalogue under inventory.read without surveying hosts. limit is 1..64; cursor is at most 256 UTF-8 bytes. Empty cursor starts a listing. Continuations bind caller, runtime instance and catalogue; changed or foreign cursors give gap. Every page uses one current catalogue snapshot. Invalid bounds give invalid; policy refusal gives not_permitted and decision outage gives unavailable, with no partial disclosure. */
+  modalities(cursor: string, limit: bigint): Promise<ModalityPage>;
   /** Read model families and aliases. Fresh requests survey the existing hosts. */
   models(fresh: boolean): Promise<ModelsSnapshot>;
   /** Read host residency, duplicate families and routing audit. Who holds the card is abstraction.resource/table@1, outside this subset. */
@@ -238,6 +387,8 @@ export declare class RouterClient {
   pick(request: PickRequest): Promise<PickResult>;
   /** List the families a caller may ask for a profile, one name each and the conservative context, after the request's placement and answer reserve. Gated by abstraction.router/inventory.read. */
   offer(request: OfferRequest): Promise<OfferSnapshot>;
+  /** Wait up to wait_ms milliseconds for the request's Offer answer to differ from cursor, then answer it with its cursor. An empty cursor answers at once; fresh surveys the servers before the first reading only. The router's own survey clock and declaration changes renew what a wait reads. wait_ms outside 0..30000 gives invalid. Gated as Offer is (ROUTE-A2); rules in ROUTE-D11. */
+  observeOffer(request: OfferRequest, cursor: string, waitMs: bigint): Promise<OfferObservation>;
 }
 
 export declare const RouterService: Readonly<{ wireName: "abstraction.router/router@1"; Client: typeof RouterClient }>;
@@ -256,6 +407,8 @@ export declare function decode(data: Uint8Array): PickRequest;
 
 export declare function encode(v: PickRequest): Uint8Array;
 
+export declare const fromJson: <K extends keyof JsonRecords>(kind: K, data: Uint8Array) => JsonRecords[K];
+
 export declare function newAlias(): Alias;
 
 export declare function newAsk(): Ask;
@@ -266,6 +419,8 @@ export declare function newComponent(): Component;
 
 export declare function newDecision(): Decision;
 
+export declare function newEngine(): Engine;
+
 export declare function newFamily(): Family;
 
 export declare function newHostAllowance(): HostAllowance;
@@ -274,11 +429,21 @@ export declare function newHostState(): HostState;
 
 export declare function newHostsSnapshot(): HostsSnapshot;
 
+export declare function newModalityPage(): ModalityPage;
+
+export declare function newModelCapabilities(): ModelCapabilities;
+
+export declare function newModelEngine(): ModelEngine;
+
+export declare function newModelObject(): ModelObject;
+
 export declare function newModelsSnapshot(): ModelsSnapshot;
 
 export declare function newObservation(): Observation;
 
 export declare function newOffer(): Offer;
+
+export declare function newOfferObservation(): OfferObservation;
 
 export declare function newOfferRequest(): OfferRequest;
 
@@ -288,9 +453,13 @@ export declare function newPickRequest(): PickRequest;
 
 export declare function newPickResult(): PickResult;
 
-export declare const profiles: readonly ["chat", "embed", "transcription", "speech", "image"];
+export declare function newReasoningSupport(): ReasoningSupport;
+
+export declare const profiles: readonly ["chat", "embed", "transcription", "speech", "image", "live", "video"];
 
 export declare const routerErrorCodes: readonly ["internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"];
+
+export declare const toJson: <K extends keyof JsonRecords>(kind: K, value: JsonRecords[K]) => Uint8Array;
 
 export declare const verdicts: readonly ["resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"];
 

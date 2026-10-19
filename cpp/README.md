@@ -53,7 +53,7 @@ router reads; that and the HTTP window remain outside this subset. Development e
 release or all-platform conformance. [Schema](../router.thrift) ·
 [Capability and legacy behavior](../README.md).
 
-Caller `user_description` and `path_description` contain server-observed diagnostic
+[Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description) `user_description` and `path_description` contain server-observed diagnostic
 text, including proof decorations. They are not stable principal identifiers,
 filesystem paths, or authorization evidence. The audit entries likewise contain
 diagnostic caller descriptions.

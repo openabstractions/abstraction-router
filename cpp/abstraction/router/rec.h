@@ -25,6 +25,19 @@ public:
     std::size_t offset;
 };
 
+inline const std::vector<std::string> kReasoningEffortNames = {"none", "low", "medium", "high"};
+inline constexpr std::string_view kReasoningEffortNone = "none";
+inline constexpr std::string_view kReasoningEffortLow = "low";
+inline constexpr std::string_view kReasoningEffortMedium = "medium";
+inline constexpr std::string_view kReasoningEffortHigh = "high";
+
+inline const std::vector<std::string> kEngineCauseNames = {"bound", "source_only", "incompatible", "unknown", "other"};
+inline constexpr std::string_view kEngineCauseBound = "bound";
+inline constexpr std::string_view kEngineCauseSourceOnly = "source_only";
+inline constexpr std::string_view kEngineCauseIncompatible = "incompatible";
+inline constexpr std::string_view kEngineCauseUnknown = "unknown";
+inline constexpr std::string_view kEngineCauseOther = "other";
+
 inline const std::vector<std::string> kAvailabilityCauseNames = {"transport_unavailable", "credential", "rights", "configuration", "malformed", "unknown", "other"};
 inline constexpr std::string_view kAvailabilityCauseTransportUnavailable = "transport_unavailable";
 inline constexpr std::string_view kAvailabilityCauseCredential = "credential";
@@ -111,6 +124,47 @@ inline constexpr bool operator!=(std::string_view name, OfferOutcome value) { re
 
 inline const std::vector<std::string> kOfferOutcomeNames = {"offered", "invalid", "unavailable", "forbidden", "not_permitted"};
 
+enum class ModalityOutcome : std::int32_t {
+    Page = 1,
+    Gap = 2,
+    Invalid = 3,
+    Forbidden = 4,
+    Unavailable = 5,
+    NotPermitted = 6,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(ModalityOutcome value) {
+    switch (value) {
+        case ModalityOutcome::Page: return "page";
+        case ModalityOutcome::Gap: return "gap";
+        case ModalityOutcome::Invalid: return "invalid";
+        case ModalityOutcome::Forbidden: return "forbidden";
+        case ModalityOutcome::Unavailable: return "unavailable";
+        case ModalityOutcome::NotPermitted: return "not_permitted";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<ModalityOutcome> parse_modality_outcome(std::string_view name) {
+    if (name == "page") return ModalityOutcome::Page;
+    if (name == "gap") return ModalityOutcome::Gap;
+    if (name == "invalid") return ModalityOutcome::Invalid;
+    if (name == "forbidden") return ModalityOutcome::Forbidden;
+    if (name == "unavailable") return ModalityOutcome::Unavailable;
+    if (name == "not_permitted") return ModalityOutcome::NotPermitted;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(ModalityOutcome value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(ModalityOutcome value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, ModalityOutcome value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, ModalityOutcome value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kModalityOutcomeNames = {"page", "gap", "invalid", "forbidden", "unavailable", "not_permitted"};
+
 inline const std::vector<std::string> kServiceErrorCodeNames = {"handler_error", "invalid_result", "unknown_version", "unknown_service", "unknown_method", "wrong_mode", "internal", "invalid_request", "caller_refused", "unknown_operation", "unavailable", "forbidden"};
 inline constexpr std::string_view kServiceErrorCodeHandlerError = "handler_error";
 inline constexpr std::string_view kServiceErrorCodeInvalidResult = "invalid_result";
@@ -125,7 +179,184 @@ inline constexpr std::string_view kServiceErrorCodeUnknownOperation = "unknown_o
 inline constexpr std::string_view kServiceErrorCodeUnavailable = "unavailable";
 inline constexpr std::string_view kServiceErrorCodeForbidden = "forbidden";
 
-inline const std::vector<std::string> kProfiles = {"chat", "embed", "transcription", "speech", "image"};
+enum class EndpointServiceReadiness : std::int32_t {
+    Ready = 1,
+    NotReady = 2,
+    Unknown = 3,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(EndpointServiceReadiness value) {
+    switch (value) {
+        case EndpointServiceReadiness::Ready: return "ready";
+        case EndpointServiceReadiness::NotReady: return "not_ready";
+        case EndpointServiceReadiness::Unknown: return "unknown";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<EndpointServiceReadiness> parse_endpoint_service_readiness(std::string_view name) {
+    if (name == "ready") return EndpointServiceReadiness::Ready;
+    if (name == "not_ready") return EndpointServiceReadiness::NotReady;
+    if (name == "unknown") return EndpointServiceReadiness::Unknown;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(EndpointServiceReadiness value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(EndpointServiceReadiness value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, EndpointServiceReadiness value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, EndpointServiceReadiness value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kEndpointServiceReadinessNames = {"ready", "not_ready", "unknown"};
+
+inline const std::vector<std::string> kEndpointRefusalSourceNames = {"rights", "credentials", "license", "terms", "identity", "os"};
+inline constexpr std::string_view kEndpointRefusalSourceRights = "rights";
+inline constexpr std::string_view kEndpointRefusalSourceCredentials = "credentials";
+inline constexpr std::string_view kEndpointRefusalSourceLicense = "license";
+inline constexpr std::string_view kEndpointRefusalSourceTerms = "terms";
+inline constexpr std::string_view kEndpointRefusalSourceIdentity = "identity";
+inline constexpr std::string_view kEndpointRefusalSourceOs = "os";
+
+enum class EndpointRefusalDecision : std::int32_t {
+    Denied = 1,
+    NotGranted = 2,
+    PersonOnly = 3,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(EndpointRefusalDecision value) {
+    switch (value) {
+        case EndpointRefusalDecision::Denied: return "denied";
+        case EndpointRefusalDecision::NotGranted: return "not_granted";
+        case EndpointRefusalDecision::PersonOnly: return "person_only";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<EndpointRefusalDecision> parse_endpoint_refusal_decision(std::string_view name) {
+    if (name == "denied") return EndpointRefusalDecision::Denied;
+    if (name == "not_granted") return EndpointRefusalDecision::NotGranted;
+    if (name == "person_only") return EndpointRefusalDecision::PersonOnly;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(EndpointRefusalDecision value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(EndpointRefusalDecision value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, EndpointRefusalDecision value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, EndpointRefusalDecision value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kEndpointRefusalDecisionNames = {"denied", "not_granted", "person_only"};
+
+enum class EndpointRefusalAsk : std::int32_t {
+    Available = 1,
+    None = 2,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(EndpointRefusalAsk value) {
+    switch (value) {
+        case EndpointRefusalAsk::Available: return "available";
+        case EndpointRefusalAsk::None: return "none";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<EndpointRefusalAsk> parse_endpoint_refusal_ask(std::string_view name) {
+    if (name == "available") return EndpointRefusalAsk::Available;
+    if (name == "none") return EndpointRefusalAsk::None;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(EndpointRefusalAsk value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(EndpointRefusalAsk value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, EndpointRefusalAsk value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, EndpointRefusalAsk value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kEndpointRefusalAskNames = {"available", "none"};
+
+enum class EndpointProducerCheckState : std::int32_t {
+    Current = 1,
+    Repaired = 2,
+    Stale = 3,
+    Refused = 4,
+    Unverified = 5,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(EndpointProducerCheckState value) {
+    switch (value) {
+        case EndpointProducerCheckState::Current: return "current";
+        case EndpointProducerCheckState::Repaired: return "repaired";
+        case EndpointProducerCheckState::Stale: return "stale";
+        case EndpointProducerCheckState::Refused: return "refused";
+        case EndpointProducerCheckState::Unverified: return "unverified";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<EndpointProducerCheckState> parse_endpoint_producer_check_state(std::string_view name) {
+    if (name == "current") return EndpointProducerCheckState::Current;
+    if (name == "repaired") return EndpointProducerCheckState::Repaired;
+    if (name == "stale") return EndpointProducerCheckState::Stale;
+    if (name == "refused") return EndpointProducerCheckState::Refused;
+    if (name == "unverified") return EndpointProducerCheckState::Unverified;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(EndpointProducerCheckState value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(EndpointProducerCheckState value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, EndpointProducerCheckState value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, EndpointProducerCheckState value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kEndpointProducerCheckStateNames = {"current", "repaired", "stale", "refused", "unverified"};
+
+enum class EndpointDescriptionOutcome : std::int32_t {
+    Described = 1,
+    Forbidden = 2,
+    Unavailable = 3,
+    Invalid = 4,
+    Unsupported = 5,
+};
+
+// The member's name on the wire; empty for a value that names no member.
+inline constexpr std::string_view wire_name(EndpointDescriptionOutcome value) {
+    switch (value) {
+        case EndpointDescriptionOutcome::Described: return "described";
+        case EndpointDescriptionOutcome::Forbidden: return "forbidden";
+        case EndpointDescriptionOutcome::Unavailable: return "unavailable";
+        case EndpointDescriptionOutcome::Invalid: return "invalid";
+        case EndpointDescriptionOutcome::Unsupported: return "unsupported";
+    }
+    return {};
+}
+
+// The member a wire name spells; empty for a name this vocabulary refuses.
+inline std::optional<EndpointDescriptionOutcome> parse_endpoint_description_outcome(std::string_view name) {
+    if (name == "described") return EndpointDescriptionOutcome::Described;
+    if (name == "forbidden") return EndpointDescriptionOutcome::Forbidden;
+    if (name == "unavailable") return EndpointDescriptionOutcome::Unavailable;
+    if (name == "invalid") return EndpointDescriptionOutcome::Invalid;
+    if (name == "unsupported") return EndpointDescriptionOutcome::Unsupported;
+    return std::nullopt;
+}
+
+// A member equals its wire name, so code holding the contract's word compares directly.
+inline constexpr bool operator==(EndpointDescriptionOutcome value, std::string_view name) { return wire_name(value) == name; }
+inline constexpr bool operator!=(EndpointDescriptionOutcome value, std::string_view name) { return wire_name(value) != name; }
+inline constexpr bool operator==(std::string_view name, EndpointDescriptionOutcome value) { return wire_name(value) == name; }
+inline constexpr bool operator!=(std::string_view name, EndpointDescriptionOutcome value) { return wire_name(value) != name; }
+
+inline const std::vector<std::string> kEndpointDescriptionOutcomeNames = {"described", "forbidden", "unavailable", "invalid", "unsupported"};
+
+inline const std::vector<std::string> kProfiles = {"chat", "embed", "transcription", "speech", "image", "live", "video"};
 
 inline const std::vector<std::string> kVerdicts = {"resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"};
 
@@ -148,6 +379,10 @@ struct PickRequest {
     std::string profile;
 };
 
+// [Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description).
+// Diagnostic user and path descriptions observed by the server. They are
+// display information, not stable identifiers, filesystem paths or
+// authorization proof, and are never accepted as request claims.
 struct Caller {
     std::string user_description;
     std::string path_description;
@@ -159,21 +394,47 @@ struct Observation {
     std::int64_t cache_age_ms = 0;
 };
 
-// hosted is true for a name read from a hosted host's model listing; such a
-// name is never resident. profiles are what the host's own model metadata says
-// this name serves (LM Studio's type, Ollama's capabilities); empty when the
-// host reports none, and then its HostState profiles apply. held_in names the
-// storage inventory stores holding an object this alias's own name or digest
-// matches, in store order; empty when no store's object matches this name. host
-// is empty exactly for a name no host serves, which a store holds and which is
-// never resident or servable. context_length is the model's maximum supported
-// context window in tokens, read from host metadata without loading it (LM
-// Studio's max_context_length, Ollama's model_info context_length, Lemonade's
-// max_context_window); zero when the host reports none.
-// effective_context_length is a positive per-request context limit the host
-// currently reports: the loaded value when the model is resident, otherwise its
-// configured value when the host reports one (Lemonade's context_length); zero
-// when unknown. A nonpositive or contradictory effective value is omitted.
+// The reasoning controls a model takes. efforts are the chat@3 effort words it
+// answers to, approximated ones included; budget is true when it also takes a
+// reasoning token budget; default_effort is what it reasons at when the caller
+// names none.
+struct ReasoningSupport {
+    std::vector<std::string> efforts;
+    bool budget = false;
+    std::optional<std::string> default_effort;
+};
+
+// What one alias on its host takes and gives: input and output modalities
+// (text, image, audio, video), tool calls, structured output, its reasoning
+// controls and the chat@3 extension names it supports. Sources in order: the
+// catalogue entry for the model, then the engine's own facts (a loaded vision
+// projector, the chat template's tool section), then the hosted provider's
+// model listing. A fact no source states is absent, never guessed. Display
+// data; it grants nothing.
+struct ModelCapabilities {
+    std::vector<std::string> input;
+    std::vector<std::string> output;
+    std::optional<bool> tools;
+    std::optional<bool> structured_output;
+    std::optional<ReasoningSupport> reasoning;
+    std::vector<std::string> extensions;
+};
+
+// [Alias](https://openabstractions.github.io/reference.html#concept-router.alias):
+// capabilities are this alias's own on its host, never merged with the same
+// family on another host. hosted is true for a name read from a hosted host's
+// model listing; such a name is never resident. profiles are what the host's
+// own model metadata says this name serves; empty when the host reports none,
+// and then its HostState profiles apply. held_in names the storage inventory
+// stores holding an object this alias's own name or digest matches, in store
+// order; empty when no store's object matches this name. host is empty exactly
+// for a name no host serves, which a store holds and which is never resident or
+// servable. context_length is the model's maximum supported context window in
+// tokens, read from host metadata without loading it; zero when the host
+// reports none. effective_context_length is a positive per-request context
+// limit the host currently reports: the loaded value when the model is
+// resident, otherwise its configured value when the host reports one; zero when
+// unknown. A nonpositive or contradictory effective value is omitted.
 struct Alias {
     std::string host;
     std::string name;
@@ -184,19 +445,68 @@ struct Alias {
     std::vector<std::string> held_in;
     std::int64_t context_length = 0;
     std::int64_t effective_context_length = 0;
+    std::optional<ModelCapabilities> capabilities;
 };
 
-// One role-bearing object a store holds, folded into a family's detail rather
-// than listed as a family of its own (abstraction.model/descriptor@1 MODEL-C3):
-// store is the holder, role is projector, vae, or another value a storage
-// inventory source's descriptor names, and name is the store's own name for the
-// object when it named one.
+// One [role-bearing
+// object](https://openabstractions.github.io/reference.html#concept-model-identity.component)
+// a store holds, folded into a
+// [family](https://openabstractions.github.io/reference.html#concept-model.family-identity)'s
+// detail rather than listed as a family of its own
+// (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is
+// projector, vae, or another value a storage inventory source's descriptor
+// names, and name is the store's own name for the object when it named one.
 struct Component {
     std::string store;
     std::string role;
     std::string name;
 };
 
+// The provider's selected program loading weights (vocabulary D12), identified
+// within its host and registration generation. Version is omitted when
+// unreported. Source is display provenance, never an executable path or
+// authority claim.
+struct Engine {
+    std::string id;
+    std::string name;
+    std::string version;
+    std::string source;
+};
+
+// An explicit configured content-object-to-engine association from the accepted
+// provider registration or recipe. It asserts neither general format acceptance
+// nor readiness, and is separate from the client/service binding and actual
+// inference-route record.
+struct ModelEngine {
+    std::string host;
+    std::string model;
+    std::string engine;
+    std::vector<std::string> profiles;
+    std::string source;
+    std::string role;
+};
+
+// One storage content object projected with its source's model facts. Domain is
+// empty locally; object is an opaque source ID and digest requires inventory
+// evidence. A collection manifest is never one object. Missing identity or
+// descriptor facts remain unknown. Existing Component retains the logical
+// role/base-family relation. Why is plain display text, never parsed. Clients
+// never display digest as page text.
+struct ModelObject {
+    std::string domain;
+    std::string store;
+    std::string name;
+    std::string object;
+    std::string digest;
+    std::string format;
+    std::string architecture;
+    std::string role;
+    std::vector<ModelEngine> engines;
+    std::string cause;
+    std::string why;
+};
+
+// [Family](https://openabstractions.github.io/reference.html#concept-router.family-catalogue):
 // names lists one alias per server and name; a name two servers serve appears
 // twice, once per server. held_in names the storage inventory stores holding an
 // object of this family, in store order, whether or not a host serves it; empty
@@ -210,13 +520,17 @@ struct Component {
 // it, an object that is this family's only content — held_in and
 // family_source cover the family it was folded into or the family it stands in
 // for either way; components exists to say the family answers for a part, not a
-// whole model, when that is what it is.
+// whole model, when that is what it is. title is the model catalogue's display
+// name for the family, empty when none is known; it is shown to people and
+// never asked for.
 struct Family {
     std::string family;
     std::vector<Alias> names;
     std::vector<std::string> held_in;
     std::string family_source;
     std::vector<Component> components;
+    std::string title;
+    std::vector<ModelObject> objects;
 };
 
 struct ModelsSnapshot {
@@ -254,6 +568,7 @@ struct HostState {
     std::vector<std::string> profiles;
     std::string domain;
     std::optional<std::string> availability_cause;
+    std::vector<Engine> engines;
 };
 
 struct Ask {
@@ -312,7 +627,8 @@ struct OfferRequest {
 // when a counted server fixes its window at load and reported none, none for a
 // profile without a context window. input is context minus the request's
 // reserve, 0 when nothing remains or context is 0. unknown names the aliases
-// whose server reported no usable request limit, as <server>/<name>.
+// whose server reported no usable request limit, as <server>/<name>. title is
+// the family's display name as in Family.
 struct Offer {
     std::string family;
     std::vector<std::string> names;
@@ -321,6 +637,7 @@ struct Offer {
     std::string context_source;
     std::int64_t input = 0;
     std::vector<std::string> unknown;
+    std::string title;
 };
 
 // Exactly offered carries observation and offers. Every refusal carries an
@@ -329,6 +646,106 @@ struct OfferSnapshot {
     Observation observation;
     std::vector<Offer> offers;
     OfferOutcome outcome{};
+};
+
+// One long-poll Offer reading. Exactly offered carries observation, offers and
+// cursor, a digest of the offers; it answers once that digest differs from the
+// cursor given, or when wait_ms ends. Every refusal carries an empty
+// observation, no offers and an empty cursor; it makes no model availability
+// claim.
+struct OfferObservation {
+    Observation observation;
+    std::vector<Offer> offers;
+    OfferOutcome outcome{};
+    std::string cursor;
+};
+
+// page carries at most 64 distinct modality IDs, each at most 256 UTF-8 bytes,
+// in UTF-8 byte order. next is an opaque cursor of at most 256 bytes, empty
+// exactly when complete. The catalogue contains the seed modalities and valid
+// current registered host declarations, independently of model availability.
+// Other outcomes carry no modalities, an empty next and complete false. gap
+// requires restarting with an empty cursor.
+struct ModalityPage {
+    ModalityOutcome outcome{};
+    std::vector<std::string> modalities;
+    std::string next;
+    bool complete = false;
+};
+
+// The one refusal record every OA service carries beside a refusing outcome
+// (RIGHTS-E3; conventions CONV-E4). source names the authority that refused:
+// rights, credentials, license, terms, identity or os. decision is denied for
+// an explicit refusal, not_granted where no rule permits, and person_only where
+// only the person may answer the question. ask says whether asking can change
+// the answer: available, or none. action is the exact registered
+// <owner>/<name>; question the pending question's id; credential the
+// credential's name; retry_after_ms the earliest useful retry in milliseconds,
+// omitted when zero. Stop asking is denied with ask none. Current carriers
+// include config@2, messages@1, registry@3, endpoint@2 and chat@3, declared in
+// config.thrift, messages.thrift, registration.thrift and inference.thrift.
+// Other services adopt it in their scheduled versions.
+struct EndpointRefusalDetail {
+    std::string source;
+    EndpointRefusalDecision decision{};
+    EndpointRefusalAsk ask{};
+    std::string action;
+    std::string question;
+    std::string credential;
+    std::int64_t retry_after_ms = 0;
+};
+
+// Producer assertion validated by the runtime. Kind is the governed open
+// build-time vocabulary <owner>/<name>, not a display string or an authority
+// claim. copy identifies one copy within the kind. reason follows D87
+// domain:word:detail as open display text. checked is the producer's claimed
+// check time. Custom/unknown copies are unverified; readiness remains
+// independent. No runtime kind-registration method is introduced.
+struct EndpointProducerCheck {
+    std::string kind;
+    std::string copy;
+    EndpointProducerCheckState state{};
+    std::string reason;
+    std::string checked;
+};
+
+// endpoint@2 service observation. definition_hash is sha256: plus64 lowercase
+// hex over this service version's canonical wire form (CONV-V2), verified by
+// the definition-hash owner. reason retains readiness errors and is empty when
+// ready. capabilities remain display-only. Program-level producer checks belong
+// to EndpointDescription and are independent of service readiness.
+struct EndpointServiceState {
+    std::string service;
+    EndpointServiceReadiness readiness{};
+    std::string reason;
+    std::vector<std::string> guarantees;
+    std::map<std::string, std::string> capabilities;
+    std::string definition_hash;
+};
+
+// Complete endpoint@2 description with each advertised service's definition
+// hash and one program-level producer-check list. Checks are independent of
+// service readiness; absence means unobserved, never verified.
+// Forbidden/unavailable authority refusals carry the single Rights-owned
+// EndpointRefusalDetail; other outcomes omit it. Unsupported carries the
+// existing bounded reason with D87 unsupported:not_implemented words; no closed
+// staged-reason vocabulary is frozen. Non-described replies disclose no
+// program/version/services/checks. Endpoint@1 and its closed
+// EndpointDescription/EndpointServiceState remain unchanged. The compact value
+// ceiling excluding insignificant JSON whitespace is IPC-F1; an oversized whole
+// reply is unavailable/bound:reply_bytes without truncation.
+struct EndpointDescription {
+    EndpointDescriptionOutcome outcome{};
+    std::string program;
+    std::string version;
+    std::vector<EndpointServiceState> services;
+    std::optional<EndpointRefusalDetail> refusal;
+    std::string reason;
+    std::vector<EndpointProducerCheck> checks;
+};
+
+struct EndpointDescriptionResult {
+    EndpointDescription value;
 };
 
 // Codec machinery. Nothing here is API; it may change in any release.
@@ -376,56 +793,30 @@ inline void strs(std::string& out, const std::vector<std::string>& v, int depth)
     out += ']';
 }
 
+template <typename E>
+inline void enum_strs(std::string& out, const std::vector<E>& v, int depth) {
+    if (v.empty()) { out += "[]"; return; }
+    out += "[\n";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        pad(out, depth + 1);
+        esc(out, std::string(wire_name(v[i])));
+        if (i + 1 < v.size()) out += ',';
+        out += '\n';
+    }
+    pad(out, depth);
+    out += ']';
+}
 
 
 inline bool ws(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-inline void raw(std::string& out, const std::string& s, int depth) {
-    const std::size_t n = s.size();
-    for (std::size_t i = 0; i < n;) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        if (ws(c)) {
-            ++i;
-        } else if (c == '"') {
-            std::size_t j = i + 1;
-            while (j < n) {
-                if (s[j] == '\\') { j += 2; continue; }
-                if (s[j] == '"') { ++j; break; }
-                ++j;
-            }
-            out.append(s, i, j - i);
-            i = j;
-        } else if (c == '{' || c == '[') {
-            out += static_cast<char>(c);
-            ++i;
-            std::size_t j = i;
-            while (j < n && ws(static_cast<unsigned char>(s[j]))) ++j;
-            if (j < n && (s[j] == '}' || s[j] == ']')) {
-                out += s[j];
-                i = j + 1;
-            } else {
-                ++depth;
-                out += '\n';
-                pad(out, depth);
-            }
-        } else if (c == '}' || c == ']') {
-            --depth;
-            out += '\n';
-            pad(out, depth);
-            out += static_cast<char>(c);
-            ++i;
-        } else if (c == ',') {
-            out += ",\n";
-            pad(out, depth);
-            ++i;
-        } else if (c == ':') {
-            out += ": ";
-            ++i;
-        } else {
-            out += static_cast<char>(c);
-            ++i;
-        }
-    }
+// raw writes an opaque value's bytes as they are ([DEF-A3]).
+inline void raw(std::string& out, const std::string& s, int /*depth*/) {
+    // Whitespace around the value is not part of it.
+    std::size_t i = 0, j = s.size();
+    while (i < j && ws(static_cast<unsigned char>(s[i]))) ++i;
+    while (j > i && ws(static_cast<unsigned char>(s[j - 1]))) --j;
+    out.append(s, i, j - i);
 }
 
 // std::char_traits<char>::compare is specified to order by unsigned char, so a
@@ -457,6 +848,22 @@ inline bool wide_timestamp(std::string_view);
 inline std::string normalized_timestamp(std::string_view);
 inline std::string write_timestamp(std::string_view);
 
+inline void strmap(std::string& out, const std::map<std::string, std::string>& m, int depth) {
+    if (m.empty()) { out += "{}"; return; }
+    out += "{\n";
+    std::size_t i = 0;
+    for (const auto& kv : m) {
+        pad(out, depth + 1);
+        esc(out, kv.first);
+        out += ": ";
+        esc(out, kv.second);
+        if (++i < m.size()) out += ',';
+        out += '\n';
+    }
+    pad(out, depth);
+    out += '}';
+}
+
 template <typename T>
 inline void enc_list(std::string& out, const std::vector<T>& v, int depth,
                      void (*enc)(std::string&, const T&, int)) {
@@ -472,6 +879,30 @@ inline void enc_list(std::string& out, const std::vector<T>& v, int depth,
     out += ']';
 }
 
+struct CompactEncodedCounter {
+    std::size_t start, pos, count = 0;
+    bool quoted = false, escaped = false;
+    explicit CompactEncodedCounter(std::size_t at): start(at), pos(at) {}
+    void check(std::string_view out, std::size_t limit) {
+        if (out.size()-start > 1048576) throw Refusal("encoded_size", 0);
+        for (; pos < out.size(); ++pos) {
+            const auto b = out[pos];
+            if (!quoted && (b == ' ' || b == '\t' || b == '\r' || b == '\n')) continue;
+            if (++count > limit) throw Refusal("encoded_size", 0);
+            if (quoted) {
+                if (escaped) escaped = false;
+                else if (b == '\\') escaped = true;
+                else if (b == '"') quoted = false;
+            } else if (b == '"') quoted = true;
+        }
+    }
+};
+
+struct OARouterModalitiesArguments {
+    std::string cursor;
+    std::int64_t limit = 0;
+};
+
 struct OARouterModelsArguments {
     bool fresh = false;
 };
@@ -486,6 +917,12 @@ struct OARouterPickArguments {
 
 struct OARouterOfferArguments {
     OfferRequest request;
+};
+
+struct OARouterObserveOfferArguments {
+    OfferRequest request;
+    std::string cursor;
+    std::int64_t wait_ms = 0;
 };
 
 struct OAServiceFrame {
@@ -508,6 +945,10 @@ struct OAServiceError {
     std::string message;
 };
 
+struct OARouterModalitiesResult {
+    ModalityPage value;
+};
+
 struct OARouterModelsResult {
     ModelsSnapshot value;
 };
@@ -523,12 +964,21 @@ struct OARouterPickResult {
 struct OARouterOfferResult {
     OfferSnapshot value;
 };
+
+struct OARouterObserveOfferResult {
+    OfferObservation value;
+};
 inline void enc_host_allowance(std::string&, const HostAllowance&, int);
 inline void enc_pick_request(std::string&, const PickRequest&, int);
 inline void enc_caller(std::string&, const Caller&, int);
 inline void enc_observation(std::string&, const Observation&, int);
+inline void enc_reasoning_support(std::string&, const ReasoningSupport&, int);
+inline void enc_model_capabilities(std::string&, const ModelCapabilities&, int);
 inline void enc_alias(std::string&, const Alias&, int);
 inline void enc_component(std::string&, const Component&, int);
+inline void enc_engine(std::string&, const Engine&, int);
+inline void enc_model_engine(std::string&, const ModelEngine&, int);
+inline void enc_model_object(std::string&, const ModelObject&, int);
 inline void enc_family(std::string&, const Family&, int);
 inline void enc_models_snapshot(std::string&, const ModelsSnapshot&, int);
 inline void enc_host_state(std::string&, const HostState&, int);
@@ -539,17 +989,28 @@ inline void enc_pick_result(std::string&, const PickResult&, int);
 inline void enc_offer_request(std::string&, const OfferRequest&, int);
 inline void enc_offer(std::string&, const Offer&, int);
 inline void enc_offer_snapshot(std::string&, const OfferSnapshot&, int);
+inline void enc_offer_observation(std::string&, const OfferObservation&, int);
+inline void enc_modality_page(std::string&, const ModalityPage&, int);
+inline void enc_endpoint_refusal_detail(std::string&, const EndpointRefusalDetail&, int);
+inline void enc_endpoint_producer_check(std::string&, const EndpointProducerCheck&, int);
+inline void enc_endpoint_service_state(std::string&, const EndpointServiceState&, int);
+inline void enc_endpoint_description(std::string&, const EndpointDescription&, int);
+inline void enc_endpoint_description_result(std::string&, const EndpointDescriptionResult&, int);
+inline void enc_oa_router_modalities_arguments(std::string&, const OARouterModalitiesArguments&, int);
 inline void enc_oa_router_models_arguments(std::string&, const OARouterModelsArguments&, int);
 inline void enc_oa_router_hosts_arguments(std::string&, const OARouterHostsArguments&, int);
 inline void enc_oa_router_pick_arguments(std::string&, const OARouterPickArguments&, int);
 inline void enc_oa_router_offer_arguments(std::string&, const OARouterOfferArguments&, int);
+inline void enc_oa_router_observe_offer_arguments(std::string&, const OARouterObserveOfferArguments&, int);
 inline void enc_oa_service_frame(std::string&, const OAServiceFrame&, int);
 inline void enc_oa_service_reply(std::string&, const OAServiceReply&, int);
 inline void enc_oa_service_error(std::string&, const OAServiceError&, int);
+inline void enc_oa_router_modalities_result(std::string&, const OARouterModalitiesResult&, int);
 inline void enc_oa_router_models_result(std::string&, const OARouterModelsResult&, int);
 inline void enc_oa_router_hosts_result(std::string&, const OARouterHostsResult&, int);
 inline void enc_oa_router_pick_result(std::string&, const OARouterPickResult&, int);
 inline void enc_oa_router_offer_result(std::string&, const OARouterOfferResult&, int);
+inline void enc_oa_router_observe_offer_result(std::string&, const OARouterObserveOfferResult&, int);
 
 inline void enc_host_allowance(std::string& out, const HostAllowance& v, int depth) {
     out += '{';
@@ -639,6 +1100,104 @@ inline void enc_observation(std::string& out, const Observation& v, int depth) {
     out += '}';
 }
 
+inline void enc_reasoning_support(std::string& out, const ReasoningSupport& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.efforts.size()); n > 8ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "efforts");
+    out += ": ";
+    strs(out, v.efforts, depth + 1);
+    if (v.budget) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "budget");
+        out += ": ";
+        out += v.budget ? "true" : "false";
+    }
+    if (v.default_effort.has_value()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "default_effort");
+        out += ": ";
+        esc(out, *v.default_effort);
+    }
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_model_capabilities(std::string& out, const ModelCapabilities& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.input.size()); n > 16ULL) throw Refusal("bad_value",0);
+    for (const auto& oaElement : v.input) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) throw Refusal("bad_value",0);
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.output.size()); n > 16ULL) throw Refusal("bad_value",0);
+    for (const auto& oaElement : v.output) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) throw Refusal("bad_value",0);
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.extensions.size()); n > 64ULL) throw Refusal("bad_value",0);
+    out += '{';
+    bool first = true;
+    if (!v.input.empty()) {
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "input");
+        out += ": ";
+        strs(out, v.input, depth + 1);
+    }
+    if (!v.output.empty()) {
+        if (!first) out += ',';
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "output");
+        out += ": ";
+        strs(out, v.output, depth + 1);
+    }
+    if (v.tools.has_value()) {
+        if (!first) out += ',';
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "tools");
+        out += ": ";
+        out += *v.tools ? "true" : "false";
+    }
+    if (v.structured_output.has_value()) {
+        if (!first) out += ',';
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "structured_output");
+        out += ": ";
+        out += *v.structured_output ? "true" : "false";
+    }
+    if (v.reasoning.has_value()) {
+        if (!first) out += ',';
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "reasoning");
+        out += ": ";
+        enc_reasoning_support(out, *v.reasoning, depth + 1);
+    }
+    if (!v.extensions.empty()) {
+        if (!first) out += ',';
+        first = false;
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "extensions");
+        out += ": ";
+        strs(out, v.extensions, depth + 1);
+    }
+    if (!first) { out += '\n'; pad(out, depth); }
+    out += '}';
+}
+
 inline void enc_alias(std::string& out, const Alias& v, int depth) {
     out += '{';
     out += '\n';
@@ -704,6 +1263,14 @@ inline void enc_alias(std::string& out, const Alias& v, int depth) {
         out += ": ";
         num(out, v.effective_context_length);
     }
+    if (v.capabilities.has_value()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "capabilities");
+        out += ": ";
+        enc_model_capabilities(out, *v.capabilities, depth + 1);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -735,7 +1302,190 @@ inline void enc_component(std::string& out, const Component& v, int depth) {
     out += '}';
 }
 
+inline void enc_engine(std::string& out, const Engine& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.id.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.name.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.version.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.source.size()); n > 256ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "id");
+    out += ": ";
+    esc(out, v.id);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "name");
+    out += ": ";
+    esc(out, v.name);
+    if (!v.version.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "version");
+        out += ": ";
+        esc(out, v.version);
+    }
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "source");
+    out += ": ";
+    esc(out, v.source);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_model_engine(std::string& out, const ModelEngine& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.host.size()); n > 4096ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.model.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.engine.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.profiles.size()); n > 64ULL) throw Refusal("bad_value",0);
+    for (const auto& oaElement : v.profiles) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) throw Refusal("bad_value",0);
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.source.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.role.size()); n > 64ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "host");
+    out += ": ";
+    esc(out, v.host);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "model");
+    out += ": ";
+    esc(out, v.model);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "engine");
+    out += ": ";
+    esc(out, v.engine);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "profiles");
+    out += ": ";
+    strs(out, v.profiles, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "source");
+    out += ": ";
+    esc(out, v.source);
+    if (!v.role.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "role");
+        out += ": ";
+        esc(out, v.role);
+    }
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_model_object(std::string& out, const ModelObject& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.domain.size()); n > 4096ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.store.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.name.size()); n > 4096ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.object.size()); n > 1024ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.digest.size()); n > 135ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.format.size()); n > 128ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.architecture.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.role.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.engines.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.why.size()); n > 4096ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "domain");
+    out += ": ";
+    esc(out, v.domain);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "store");
+    out += ": ";
+    esc(out, v.store);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "name");
+    out += ": ";
+    esc(out, v.name);
+    if (!v.object.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "object");
+        out += ": ";
+        esc(out, v.object);
+    }
+    if (!v.digest.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "digest");
+        out += ": ";
+        esc(out, v.digest);
+    }
+    if (!v.format.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "format");
+        out += ": ";
+        esc(out, v.format);
+    }
+    if (!v.architecture.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "architecture");
+        out += ": ";
+        esc(out, v.architecture);
+    }
+    if (!v.role.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "role");
+        out += ": ";
+        esc(out, v.role);
+    }
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "engines");
+    out += ": ";
+    enc_list<ModelEngine>(out, v.engines, depth + 1, enc_model_engine);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "cause");
+    out += ": ";
+    esc(out, v.cause);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "why");
+    out += ": ";
+    esc(out, v.why);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
 inline void enc_family(std::string& out, const Family& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.title.size()); n > 128ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.objects.size()); n > 65536ULL) throw Refusal("bad_value",0);
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -772,6 +1522,22 @@ inline void enc_family(std::string& out, const Family& v, int depth) {
         out += ": ";
         enc_list<Component>(out, v.components, depth + 1, enc_component);
     }
+    if (!v.title.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "title");
+        out += ": ";
+        esc(out, v.title);
+    }
+    if (!v.objects.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "objects");
+        out += ": ";
+        enc_list<ModelObject>(out, v.objects, depth + 1, enc_model_object);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -796,6 +1562,7 @@ inline void enc_models_snapshot(std::string& out, const ModelsSnapshot& v, int d
 }
 
 inline void enc_host_state(std::string& out, const HostState& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.engines.size()); n > 64ULL) throw Refusal("bad_value",0);
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -893,6 +1660,14 @@ inline void enc_host_state(std::string& out, const HostState& v, int depth) {
         esc(out, "availability_cause");
         out += ": ";
         esc(out, *v.availability_cause);
+    }
+    if (!v.engines.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "engines");
+        out += ": ";
+        enc_list<Engine>(out, v.engines, depth + 1, enc_engine);
     }
     out += '\n';
     pad(out, depth);
@@ -1101,6 +1876,7 @@ inline void enc_offer_request(std::string& out, const OfferRequest& v, int depth
 }
 
 inline void enc_offer(std::string& out, const Offer& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.title.size()); n > 128ULL) throw Refusal("bad_value",0);
     out += '{';
     out += '\n';
     pad(out, depth + 1);
@@ -1145,6 +1921,14 @@ inline void enc_offer(std::string& out, const Offer& v, int depth) {
         out += ": ";
         strs(out, v.unknown, depth + 1);
     }
+    if (!v.title.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "title");
+        out += ": ";
+        esc(out, v.title);
+    }
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1170,6 +1954,349 @@ inline void enc_offer_snapshot(std::string& out, const OfferSnapshot& v, int dep
     esc(out, "outcome");
     out += ": ";
     esc(out, std::string(wire_name(v.outcome)));
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_offer_observation(std::string& out, const OfferObservation& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.offers.size()); n > 4096ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (wire_name(v.outcome).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "observation");
+    out += ": ";
+    enc_observation(out, v.observation, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "offers");
+    out += ": ";
+    enc_list<Offer>(out, v.offers, depth + 1, enc_offer);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "outcome");
+    out += ": ";
+    esc(out, std::string(wire_name(v.outcome)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "cursor");
+    out += ": ";
+    esc(out, v.cursor);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_modality_page(std::string& out, const ModalityPage& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.modalities.size()); n > 64ULL) throw Refusal("bad_value",0);
+    for (const auto& oaElement : v.modalities) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) throw Refusal("bad_value",0);
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.next.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (wire_name(v.outcome).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "outcome");
+    out += ": ";
+    esc(out, std::string(wire_name(v.outcome)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "modalities");
+    out += ": ";
+    strs(out, v.modalities, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "next");
+    out += ": ";
+    esc(out, v.next);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "complete");
+    out += ": ";
+    out += v.complete ? "true" : "false";
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_endpoint_refusal_detail(std::string& out, const EndpointRefusalDetail& v, int depth) {
+if(depth<0||depth>=64)throw Refusal("depth_exceeded",0);
+    if (const auto n = static_cast<std::uint64_t>(v.action.size()); n != 0 && (n < 1ULL || n > 128ULL)) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.question.size()); n != 0 && (n < 1ULL || n > 128ULL)) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.credential.size()); n != 0 && (n < 1ULL || n > 64ULL)) throw Refusal("bad_value",0);
+    if (v.retry_after_ms < 0LL || v.retry_after_ms > 86400000LL) throw Refusal("bad_value",0);
+    if (wire_name(v.decision).empty()) throw Refusal("bad_enum", 0);
+    if (wire_name(v.ask).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "source");
+    out += ": ";
+    esc(out, v.source);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "decision");
+    out += ": ";
+    esc(out, std::string(wire_name(v.decision)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "ask");
+    out += ": ";
+    esc(out, std::string(wire_name(v.ask)));
+    if (!v.action.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "action");
+        out += ": ";
+        esc(out, v.action);
+    }
+    if (!v.question.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "question");
+        out += ": ";
+        esc(out, v.question);
+    }
+    if (!v.credential.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "credential");
+        out += ": ";
+        esc(out, v.credential);
+    }
+    if (v.retry_after_ms != 0) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "retry_after_ms");
+        out += ": ";
+        num(out, v.retry_after_ms);
+    }
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_endpoint_producer_check(std::string& out, const EndpointProducerCheck& v, int depth) {
+if(depth<0||depth>=1000)throw Refusal("depth_exceeded",0);
+    if (const auto n = static_cast<std::uint64_t>(v.kind.size()); n < 1ULL || n > 128ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.kind.size(); ++i) { const auto c = static_cast<unsigned char>(v.kind[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.kind.size() && static_cast<unsigned char>(v.kind[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (const auto n = static_cast<std::uint64_t>(v.copy.size()); n > 256ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.copy.size(); ++i) { const auto c = static_cast<unsigned char>(v.copy[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.copy.size() && static_cast<unsigned char>(v.copy[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (wire_name(v.state).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "kind");
+    out += ": ";
+    esc(out, v.kind);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "copy");
+    out += ": ";
+    esc(out, v.copy);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "state");
+    out += ": ";
+    esc(out, std::string(wire_name(v.state)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "reason");
+    out += ": ";
+    esc(out, v.reason);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "checked");
+    out += ": ";
+    esc(out, write_timestamp(v.checked));
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_endpoint_service_state(std::string& out, const EndpointServiceState& v, int depth) {
+if(depth<0||depth>=1000)throw Refusal("depth_exceeded",0);
+    if (const auto n = static_cast<std::uint64_t>(v.service.size()); n < 1ULL || n > 128ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.service.size(); ++i) { const auto c = static_cast<unsigned char>(v.service[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.service.size() && static_cast<unsigned char>(v.service[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (const auto n = static_cast<std::uint64_t>(v.guarantees.size()); n > 64ULL) throw Refusal("bad_value",0);
+    for (const auto& oaElement : v.guarantees) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 128ULL) throw Refusal("bad_value",0);
+    }
+    for (const auto& oaElement : v.guarantees) {
+    for (std::size_t i = 0; i < oaElement.size(); ++i) { const auto c = static_cast<unsigned char>(oaElement[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < oaElement.size() && static_cast<unsigned char>(oaElement[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.capabilities.size()); n > 32ULL) throw Refusal("bad_value",0);
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.first;
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 64ULL) throw Refusal("bad_value",0);
+    }
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.first;
+    for (std::size_t i = 0; i < oaElement.size(); ++i) { const auto c = static_cast<unsigned char>(oaElement[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < oaElement.size() && static_cast<unsigned char>(oaElement[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    }
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.second;
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n > 256ULL) throw Refusal("bad_value",0);
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.definition_hash.size()); n < 71ULL || n > 71ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.definition_hash.size(); ++i) { const auto c = static_cast<unsigned char>(v.definition_hash[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.definition_hash.size() && static_cast<unsigned char>(v.definition_hash[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (wire_name(v.readiness).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "service");
+    out += ": ";
+    esc(out, v.service);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "readiness");
+    out += ": ";
+    esc(out, std::string(wire_name(v.readiness)));
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "reason");
+    out += ": ";
+    esc(out, v.reason);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "guarantees");
+    out += ": ";
+    strs(out, v.guarantees, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "capabilities");
+    out += ": ";
+    strmap(out, v.capabilities, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "definition_hash");
+    out += ": ";
+    esc(out, v.definition_hash);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_endpoint_description(std::string& out, const EndpointDescription& v, int depth) {
+if(depth<0||depth>=1000)throw Refusal("depth_exceeded",0);
+    CompactEncodedCounter encoded_counter(out.size());
+    if (const auto n = static_cast<std::uint64_t>(v.program.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.version.size()); n > 256ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.services.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) throw Refusal("bad_value",0);
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) throw Refusal("bad_value",0); }
+    if (const auto n = static_cast<std::uint64_t>(v.checks.size()); n > 64ULL) throw Refusal("bad_value",0);
+    if (wire_name(v.outcome).empty()) throw Refusal("bad_enum", 0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "outcome");
+    out += ": ";
+    esc(out, std::string(wire_name(v.outcome)));
+    encoded_counter.check(out, 1048576);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "program");
+    out += ": ";
+    esc(out, v.program);
+    encoded_counter.check(out, 1048576);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "version");
+    out += ": ";
+    esc(out, v.version);
+    encoded_counter.check(out, 1048576);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "services");
+    out += ": ";
+    enc_list<EndpointServiceState>(out, v.services, depth + 1, enc_endpoint_service_state);
+    encoded_counter.check(out, 1048576);
+    if (v.refusal.has_value()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "refusal");
+        out += ": ";
+        enc_endpoint_refusal_detail(out, *v.refusal, depth + 1);
+    }
+    encoded_counter.check(out, 1048576);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "reason");
+    out += ": ";
+    esc(out, v.reason);
+    encoded_counter.check(out, 1048576);
+    if (!v.checks.empty()) {
+        out += ',';
+        out += '\n';
+        pad(out, depth + 1);
+        esc(out, "checks");
+        out += ": ";
+        enc_list<EndpointProducerCheck>(out, v.checks, depth + 1, enc_endpoint_producer_check);
+    }
+    encoded_counter.check(out, 1048576);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+    encoded_counter.check(out, 1048576);
+}
+
+inline void enc_endpoint_description_result(std::string& out, const EndpointDescriptionResult& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "value");
+    out += ": ";
+    enc_endpoint_description(out, v.value, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_oa_router_modalities_arguments(std::string& out, const OARouterModalitiesArguments& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "cursor");
+    out += ": ";
+    esc(out, v.cursor);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "limit");
+    out += ": ";
+    num(out, v.limit);
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1218,6 +2345,31 @@ inline void enc_oa_router_offer_arguments(std::string& out, const OARouterOfferA
     esc(out, "request");
     out += ": ";
     enc_offer_request(out, v.request, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_oa_router_observe_offer_arguments(std::string& out, const OARouterObserveOfferArguments& v, int depth) {
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) throw Refusal("bad_value",0);
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "request");
+    out += ": ";
+    enc_offer_request(out, v.request, depth + 1);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "cursor");
+    out += ": ";
+    esc(out, v.cursor);
+    out += ',';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "wait_ms");
+    out += ": ";
+    num(out, v.wait_ms);
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1307,6 +2459,18 @@ inline void enc_oa_service_error(std::string& out, const OAServiceError& v, int 
     out += '}';
 }
 
+inline void enc_oa_router_modalities_result(std::string& out, const OARouterModalitiesResult& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "value");
+    out += ": ";
+    enc_modality_page(out, v.value, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
 inline void enc_oa_router_models_result(std::string& out, const OARouterModelsResult& v, int depth) {
     out += '{';
     out += '\n';
@@ -1350,6 +2514,18 @@ inline void enc_oa_router_offer_result(std::string& out, const OARouterOfferResu
     esc(out, "value");
     out += ": ";
     enc_offer_snapshot(out, v.value, depth + 1);
+    out += '\n';
+    pad(out, depth);
+    out += '}';
+}
+
+inline void enc_oa_router_observe_offer_result(std::string& out, const OARouterObserveOfferResult& v, int depth) {
+    out += '{';
+    out += '\n';
+    pad(out, depth + 1);
+    esc(out, "value");
+    out += ": ";
+    enc_offer_observation(out, v.value, depth + 1);
     out += '\n';
     pad(out, depth);
     out += '}';
@@ -1403,6 +2579,9 @@ struct Reader {
     std::string_view buf;
     std::size_t pos = 0;
     int depth = 0;
+    int limit = 0;
+    int ceiling = 0;
+    int depth_limit() const {int own=ceiling>0?ceiling:kDepthLimit;return limit>0&&limit<own?limit:own;}
 
     [[noreturn]] void refuse(const char* word) const { throw Refusal(word, pos); }
 
@@ -1417,7 +2596,7 @@ struct Reader {
     }
 
     void enter() {
-        if (++depth > kDepthLimit) refuse("depth_exceeded");
+        if (++depth > depth_limit()) refuse("depth_exceeded");
     }
 
     std::string str() {
@@ -1650,6 +2829,34 @@ struct Reader {
     }
 };
 
+inline std::map<std::string, std::string> str_map(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    std::map<std::string, std::string> out;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string k = r.str();
+            if (out.count(k) != 0) r.refuse("duplicate_key");
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            out[k] = r.str();
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    return out;
+}
+
 template <typename T>
 inline std::vector<T> decode_list(Reader& r, T (*elem)(Reader&)) {
     if (r.at() != '[') r.refuse("wrong_type");
@@ -1756,12 +2963,34 @@ inline std::string write_timestamp(std::string_view s) {
     return result;
 }
 
+inline void check_encoded_size(const Reader& r, std::size_t limit) {
+    auto depth = r.depth; bool quoted = false, escaped = false; std::size_t count = 0;
+    for (auto i = r.pos; i < r.buf.size(); ++i) {
+        if (i-r.pos >= 1048576) r.refuse("encoded_size");
+        const auto c = r.buf[i];
+        if (!quoted && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) continue;
+        if (++count > limit) r.refuse("encoded_size");
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') quoted = false;
+        } else if (c == '"') quoted = true;
+        else if (c == '{' || c == '[') { if (++depth > r.depth_limit()) r.refuse("depth_exceeded"); }
+        else if (c == '}' || c == ']') { if (--depth <= r.depth) return; }
+    }
+}
+
 inline HostAllowance decode_host_allowance(Reader& r);
 inline PickRequest decode_pick_request(Reader& r);
 inline Caller decode_caller(Reader& r);
 inline Observation decode_observation(Reader& r);
+inline ReasoningSupport decode_reasoning_support(Reader& r);
+inline ModelCapabilities decode_model_capabilities(Reader& r);
 inline Alias decode_alias(Reader& r);
 inline Component decode_component(Reader& r);
+inline Engine decode_engine(Reader& r);
+inline ModelEngine decode_model_engine(Reader& r);
+inline ModelObject decode_model_object(Reader& r);
 inline Family decode_family(Reader& r);
 inline ModelsSnapshot decode_models_snapshot(Reader& r);
 inline HostState decode_host_state(Reader& r);
@@ -1772,17 +3001,28 @@ inline PickResult decode_pick_result(Reader& r);
 inline OfferRequest decode_offer_request(Reader& r);
 inline Offer decode_offer(Reader& r);
 inline OfferSnapshot decode_offer_snapshot(Reader& r);
+inline OfferObservation decode_offer_observation(Reader& r);
+inline ModalityPage decode_modality_page(Reader& r);
+inline EndpointRefusalDetail decode_endpoint_refusal_detail(Reader& r);
+inline EndpointProducerCheck decode_endpoint_producer_check(Reader& r);
+inline EndpointServiceState decode_endpoint_service_state(Reader& r);
+inline EndpointDescription decode_endpoint_description(Reader& r);
+inline EndpointDescriptionResult decode_endpoint_description_result(Reader& r);
+inline OARouterModalitiesArguments decode_oa_router_modalities_arguments(Reader& r);
 inline OARouterModelsArguments decode_oa_router_models_arguments(Reader& r);
 inline OARouterHostsArguments decode_oa_router_hosts_arguments(Reader& r);
 inline OARouterPickArguments decode_oa_router_pick_arguments(Reader& r);
 inline OARouterOfferArguments decode_oa_router_offer_arguments(Reader& r);
+inline OARouterObserveOfferArguments decode_oa_router_observe_offer_arguments(Reader& r);
 inline OAServiceFrame decode_oa_service_frame(Reader& r);
 inline OAServiceReply decode_oa_service_reply(Reader& r);
 inline OAServiceError decode_oa_service_error(Reader& r);
+inline OARouterModalitiesResult decode_oa_router_modalities_result(Reader& r);
 inline OARouterModelsResult decode_oa_router_models_result(Reader& r);
 inline OARouterHostsResult decode_oa_router_hosts_result(Reader& r);
 inline OARouterPickResult decode_oa_router_pick_result(Reader& r);
 inline OARouterOfferResult decode_oa_router_offer_result(Reader& r);
+inline OARouterObserveOfferResult decode_oa_router_observe_offer_result(Reader& r);
 
 inline HostAllowance decode_host_allowance(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
@@ -1871,6 +3111,7 @@ inline Caller decode_caller(Reader& r) {
     r.enter();
     ++r.pos;
     Caller v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -1891,6 +3132,7 @@ inline Caller decode_caller(Reader& r) {
                 seen |= 2u;
                 v.path_description = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -1910,6 +3152,7 @@ inline Observation decode_observation(Reader& r) {
     r.enter();
     ++r.pos;
     Observation v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -1934,6 +3177,7 @@ inline Observation decode_observation(Reader& r) {
                 seen |= 4u;
                 v.cache_age_ms = r.integer(INT64_MIN, INT64_MAX);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -1948,11 +3192,123 @@ inline Observation decode_observation(Reader& r) {
     return v;
 }
 
+inline ReasoningSupport decode_reasoning_support(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    ReasoningSupport v;
+    std::map<std::string, bool> unknown_keys;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "efforts") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.efforts = r.str_list();
+            } else if (key == "budget") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.budget = r.boolean();
+            } else if (key == "default_effort") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.default_effort = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.efforts.size()); n > 8ULL) r.refuse("bad_value");
+    return v;
+}
+
+inline ModelCapabilities decode_model_capabilities(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    ModelCapabilities v;
+    std::map<std::string, bool> unknown_keys;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "input") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.input = r.str_list();
+            } else if (key == "output") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.output = r.str_list();
+            } else if (key == "tools") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.tools = r.boolean();
+            } else if (key == "structured_output") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.structured_output = r.boolean();
+            } else if (key == "reasoning") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.reasoning = decode_reasoning_support(r);
+            } else if (key == "extensions") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.extensions = r.str_list();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if (const auto n = static_cast<std::uint64_t>(v.input.size()); n > 16ULL) r.refuse("bad_value");
+    for (const auto& oaElement : v.input) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) r.refuse("bad_value");
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.output.size()); n > 16ULL) r.refuse("bad_value");
+    for (const auto& oaElement : v.output) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) r.refuse("bad_value");
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.extensions.size()); n > 64ULL) r.refuse("bad_value");
+    return v;
+}
+
 inline Alias decode_alias(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
     Alias v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2000,7 +3356,12 @@ inline Alias decode_alias(Reader& r) {
                 if (seen & 256u) r.refuse("duplicate_field");
                 seen |= 256u;
                 v.effective_context_length = r.integer(INT64_MIN, INT64_MAX);
+            } else if (key == "capabilities") {
+                if (seen & 512u) r.refuse("duplicate_field");
+                seen |= 512u;
+                v.capabilities = decode_model_capabilities(r);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2020,6 +3381,7 @@ inline Component decode_component(Reader& r) {
     r.enter();
     ++r.pos;
     Component v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2044,6 +3406,7 @@ inline Component decode_component(Reader& r) {
                 seen |= 4u;
                 v.name = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2058,11 +3421,218 @@ inline Component decode_component(Reader& r) {
     return v;
 }
 
+inline Engine decode_engine(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    Engine v;
+    std::map<std::string, bool> unknown_keys;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "id") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.id = r.str();
+            } else if (key == "name") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.name = r.str();
+            } else if (key == "version") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.version = r.str();
+            } else if (key == "source") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.source = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 11u) != 11u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.id.size()); n > 64ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.name.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.version.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.source.size()); n > 256ULL) r.refuse("bad_value");
+    return v;
+}
+
+inline ModelEngine decode_model_engine(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    ModelEngine v;
+    std::map<std::string, bool> unknown_keys;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "host") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.host = r.str();
+            } else if (key == "model") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.model = r.str();
+            } else if (key == "engine") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.engine = r.str();
+            } else if (key == "profiles") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.profiles = r.str_list();
+            } else if (key == "source") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.source = r.str();
+            } else if (key == "role") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.role = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 31u) != 31u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.host.size()); n > 4096ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.model.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.engine.size()); n > 64ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.profiles.size()); n > 64ULL) r.refuse("bad_value");
+    for (const auto& oaElement : v.profiles) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) r.refuse("bad_value");
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.source.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.role.size()); n > 64ULL) r.refuse("bad_value");
+    return v;
+}
+
+inline ModelObject decode_model_object(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    ModelObject v;
+    std::map<std::string, bool> unknown_keys;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "domain") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.domain = r.str();
+            } else if (key == "store") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.store = r.str();
+            } else if (key == "name") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.name = r.str();
+            } else if (key == "object") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.object = r.str();
+            } else if (key == "digest") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.digest = r.str();
+            } else if (key == "format") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.format = r.str();
+            } else if (key == "architecture") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.architecture = r.str();
+            } else if (key == "role") {
+                if (seen & 128u) r.refuse("duplicate_field");
+                seen |= 128u;
+                v.role = r.str();
+            } else if (key == "engines") {
+                if (seen & 256u) r.refuse("duplicate_field");
+                seen |= 256u;
+                v.engines = decode_list<ModelEngine>(r, decode_model_engine);
+            } else if (key == "cause") {
+                if (seen & 512u) r.refuse("duplicate_field");
+                seen |= 512u;
+                v.cause = r.str();
+            } else if (key == "why") {
+                if (seen & 1024u) r.refuse("duplicate_field");
+                seen |= 1024u;
+                v.why = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1799u) != 1799u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.domain.size()); n > 4096ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.store.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.name.size()); n > 4096ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.object.size()); n > 1024ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.digest.size()); n > 135ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.format.size()); n > 128ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.architecture.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.role.size()); n > 64ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.engines.size()); n > 64ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.why.size()); n > 4096ULL) r.refuse("bad_value");
+    return v;
+}
+
 inline Family decode_family(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
     ++r.pos;
     Family v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2094,7 +3664,16 @@ inline Family decode_family(Reader& r) {
                 if (seen & 16u) r.refuse("duplicate_field");
                 seen |= 16u;
                 v.components = decode_list<Component>(r, decode_component);
+            } else if (key == "title") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.title = r.str();
+            } else if (key == "objects") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.objects = decode_list<ModelObject>(r, decode_model_object);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2106,6 +3685,8 @@ inline Family decode_family(Reader& r) {
     ++r.pos;
     --r.depth;
     if ((seen & 3u) != 3u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.title.size()); n > 128ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.objects.size()); n > 65536ULL) r.refuse("bad_value");
     return v;
 }
 
@@ -2114,6 +3695,7 @@ inline ModelsSnapshot decode_models_snapshot(Reader& r) {
     r.enter();
     ++r.pos;
     ModelsSnapshot v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2134,6 +3716,7 @@ inline ModelsSnapshot decode_models_snapshot(Reader& r) {
                 seen |= 2u;
                 v.models = decode_list<Family>(r, decode_family);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2153,6 +3736,7 @@ inline HostState decode_host_state(Reader& r) {
     r.enter();
     ++r.pos;
     HostState v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2220,7 +3804,12 @@ inline HostState decode_host_state(Reader& r) {
                 if (seen & 8192u) r.refuse("duplicate_field");
                 seen |= 8192u;
                 v.availability_cause = r.str();
+            } else if (key == "engines") {
+                if (seen & 16384u) r.refuse("duplicate_field");
+                seen |= 16384u;
+                v.engines = decode_list<Engine>(r, decode_engine);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2232,6 +3821,7 @@ inline HostState decode_host_state(Reader& r) {
     ++r.pos;
     --r.depth;
     if ((seen & 127u) != 127u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.engines.size()); n > 64ULL) r.refuse("bad_value");
     return v;
 }
 
@@ -2240,6 +3830,7 @@ inline Ask decode_ask(Reader& r) {
     r.enter();
     ++r.pos;
     Ask v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2280,6 +3871,7 @@ inline Ask decode_ask(Reader& r) {
                 seen |= 64u;
                 v.host = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2299,6 +3891,7 @@ inline HostsSnapshot decode_hosts_snapshot(Reader& r) {
     r.enter();
     ++r.pos;
     HostsSnapshot v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2327,6 +3920,7 @@ inline HostsSnapshot decode_hosts_snapshot(Reader& r) {
                 seen |= 8u;
                 v.asked = decode_list<Ask>(r, decode_ask);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2346,6 +3940,7 @@ inline Decision decode_decision(Reader& r) {
     r.enter();
     ++r.pos;
     Decision v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2402,6 +3997,7 @@ inline Decision decode_decision(Reader& r) {
                 seen |= 1024u;
                 v.why = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2421,6 +4017,7 @@ inline PickResult decode_pick_result(Reader& r) {
     r.enter();
     ++r.pos;
     PickResult v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2441,6 +4038,7 @@ inline PickResult decode_pick_result(Reader& r) {
                 seen |= 2u;
                 v.decision = decode_decision(r);
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2513,6 +4111,7 @@ inline Offer decode_offer(Reader& r) {
     r.enter();
     ++r.pos;
     Offer v;
+    std::map<std::string, bool> unknown_keys;
     std::uint32_t seen = 0;
     r.skip_ws();
     if (r.at() != '}') {
@@ -2552,7 +4151,12 @@ inline Offer decode_offer(Reader& r) {
                 if (seen & 64u) r.refuse("duplicate_field");
                 seen |= 64u;
                 v.unknown = r.str_list();
+            } else if (key == "title") {
+                if (seen & 128u) r.refuse("duplicate_field");
+                seen |= 128u;
+                v.title = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2564,6 +4168,7 @@ inline Offer decode_offer(Reader& r) {
     ++r.pos;
     --r.depth;
     if ((seen & 63u) != 63u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.title.size()); n > 128ULL) r.refuse("bad_value");
     return v;
 }
 
@@ -2572,6 +4177,7 @@ inline OfferSnapshot decode_offer_snapshot(Reader& r) {
     r.enter();
     ++r.pos;
     OfferSnapshot v;
+    std::map<std::string, bool> unknown_keys;
     std::optional<std::string> wire_outcome;
     std::uint32_t seen = 0;
     r.skip_ws();
@@ -2597,6 +4203,7 @@ inline OfferSnapshot decode_offer_snapshot(Reader& r) {
                 seen |= 4u;
                 wire_outcome = r.str();
             } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
                 r.skip_value();
             }
             r.skip_ws();
@@ -2613,6 +4220,502 @@ inline OfferSnapshot decode_offer_snapshot(Reader& r) {
         if (!parsed) r.refuse("bad_enum");
         v.outcome = *parsed;
     }
+    return v;
+}
+
+inline OfferObservation decode_offer_observation(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OfferObservation v;
+    std::map<std::string, bool> unknown_keys;
+    std::optional<std::string> wire_outcome;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "observation") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.observation = decode_observation(r);
+            } else if (key == "offers") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.offers = decode_list<Offer>(r, decode_offer);
+            } else if (key == "outcome") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                wire_outcome = r.str();
+            } else if (key == "cursor") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.cursor = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 15u) != 15u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.offers.size()); n > 4096ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) r.refuse("bad_value");
+    if (wire_outcome) {
+        const auto parsed = parse_offer_outcome(*wire_outcome);
+        if (!parsed) r.refuse("bad_enum");
+        v.outcome = *parsed;
+    }
+    return v;
+}
+
+inline ModalityPage decode_modality_page(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    ModalityPage v;
+    std::map<std::string, bool> unknown_keys;
+    std::optional<std::string> wire_outcome;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "outcome") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                wire_outcome = r.str();
+            } else if (key == "modalities") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.modalities = r.str_list();
+            } else if (key == "next") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.next = r.str();
+            } else if (key == "complete") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.complete = r.boolean();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 15u) != 15u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.modalities.size()); n > 64ULL) r.refuse("bad_value");
+    for (const auto& oaElement : v.modalities) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 256ULL) r.refuse("bad_value");
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.next.size()); n > 256ULL) r.refuse("bad_value");
+    if (wire_outcome) {
+        const auto parsed = parse_modality_outcome(*wire_outcome);
+        if (!parsed) r.refuse("bad_enum");
+        v.outcome = *parsed;
+    }
+    return v;
+}
+
+inline EndpointRefusalDetail decode_endpoint_refusal_detail(Reader& r) {
+const int previous_ceiling=r.ceiling;struct LimitRestore{Reader&r;int previous;~LimitRestore(){r.ceiling=previous;}} restore{r,previous_ceiling};r.ceiling=64;
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    EndpointRefusalDetail v;
+    std::map<std::string, bool> unknown_keys;
+    std::optional<std::string> wire_decision;
+    std::optional<std::string> wire_ask;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "source") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.source = r.str();
+            } else if (key == "decision") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                wire_decision = r.str();
+            } else if (key == "ask") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                wire_ask = r.str();
+            } else if (key == "action") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.action = r.str();
+            } else if (key == "question") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.question = r.str();
+            } else if (key == "credential") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.credential = r.str();
+            } else if (key == "retry_after_ms") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.retry_after_ms = r.integer(INT64_MIN, INT64_MAX);
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 7u) != 7u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.action.size()); n != 0 && (n < 1ULL || n > 128ULL)) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.question.size()); n != 0 && (n < 1ULL || n > 128ULL)) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.credential.size()); n != 0 && (n < 1ULL || n > 64ULL)) r.refuse("bad_value");
+    if (v.retry_after_ms < 0LL || v.retry_after_ms > 86400000LL) r.refuse("bad_value");
+    if (wire_decision) {
+        const auto parsed = parse_endpoint_refusal_decision(*wire_decision);
+        if (!parsed) r.refuse("bad_enum");
+        v.decision = *parsed;
+    }
+    if (wire_ask) {
+        const auto parsed = parse_endpoint_refusal_ask(*wire_ask);
+        if (!parsed) r.refuse("bad_enum");
+        v.ask = *parsed;
+    }
+    return v;
+}
+
+inline EndpointProducerCheck decode_endpoint_producer_check(Reader& r) {
+const int previous_ceiling=r.ceiling;struct LimitRestore{Reader&r;int previous;~LimitRestore(){r.ceiling=previous;}} restore{r,previous_ceiling};r.ceiling=1000;
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    EndpointProducerCheck v;
+    std::optional<std::string> wire_state;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "kind") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.kind = r.str();
+            } else if (key == "copy") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.copy = r.str();
+            } else if (key == "state") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                wire_state = r.str();
+            } else if (key == "reason") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.reason = r.str();
+            } else if (key == "checked") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.checked = read_timestamp(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 31u) != 31u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.kind.size()); n < 1ULL || n > 128ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.kind.size(); ++i) { const auto c = static_cast<unsigned char>(v.kind[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.kind.size() && static_cast<unsigned char>(v.kind[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (const auto n = static_cast<std::uint64_t>(v.copy.size()); n > 256ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.copy.size(); ++i) { const auto c = static_cast<unsigned char>(v.copy[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.copy.size() && static_cast<unsigned char>(v.copy[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (wire_state) {
+        const auto parsed = parse_endpoint_producer_check_state(*wire_state);
+        if (!parsed) r.refuse("bad_enum");
+        v.state = *parsed;
+    }
+    return v;
+}
+
+inline EndpointServiceState decode_endpoint_service_state(Reader& r) {
+const int previous_ceiling=r.ceiling;struct LimitRestore{Reader&r;int previous;~LimitRestore(){r.ceiling=previous;}} restore{r,previous_ceiling};r.ceiling=1000;
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    EndpointServiceState v;
+    std::map<std::string, bool> unknown_keys;
+    std::optional<std::string> wire_readiness;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "service") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.service = r.str();
+            } else if (key == "readiness") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                wire_readiness = r.str();
+            } else if (key == "reason") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.reason = r.str();
+            } else if (key == "guarantees") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.guarantees = r.str_list();
+            } else if (key == "capabilities") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.capabilities = str_map(r);
+            } else if (key == "definition_hash") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.definition_hash = r.str();
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 63u) != 63u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.service.size()); n < 1ULL || n > 128ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.service.size(); ++i) { const auto c = static_cast<unsigned char>(v.service[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.service.size() && static_cast<unsigned char>(v.service[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (const auto n = static_cast<std::uint64_t>(v.guarantees.size()); n > 64ULL) r.refuse("bad_value");
+    for (const auto& oaElement : v.guarantees) {
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 128ULL) r.refuse("bad_value");
+    }
+    for (const auto& oaElement : v.guarantees) {
+    for (std::size_t i = 0; i < oaElement.size(); ++i) { const auto c = static_cast<unsigned char>(oaElement[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < oaElement.size() && static_cast<unsigned char>(oaElement[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.capabilities.size()); n > 32ULL) r.refuse("bad_value");
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.first;
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n < 1ULL || n > 64ULL) r.refuse("bad_value");
+    }
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.first;
+    for (std::size_t i = 0; i < oaElement.size(); ++i) { const auto c = static_cast<unsigned char>(oaElement[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < oaElement.size() && static_cast<unsigned char>(oaElement[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    }
+    for (const auto& oaEntry : v.capabilities) { const auto& oaElement = oaEntry.second;
+    if (const auto n = static_cast<std::uint64_t>(oaElement.size()); n > 256ULL) r.refuse("bad_value");
+    }
+    if (const auto n = static_cast<std::uint64_t>(v.definition_hash.size()); n < 71ULL || n > 71ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.definition_hash.size(); ++i) { const auto c = static_cast<unsigned char>(v.definition_hash[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.definition_hash.size() && static_cast<unsigned char>(v.definition_hash[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (wire_readiness) {
+        const auto parsed = parse_endpoint_service_readiness(*wire_readiness);
+        if (!parsed) r.refuse("bad_enum");
+        v.readiness = *parsed;
+    }
+    return v;
+}
+
+inline EndpointDescription decode_endpoint_description(Reader& r) {
+const int previous_ceiling=r.ceiling;struct LimitRestore{Reader&r;int previous;~LimitRestore(){r.ceiling=previous;}} restore{r,previous_ceiling};r.ceiling=1000;
+    if (r.at() != '{') r.refuse("wrong_type");
+    check_encoded_size(r, 1048576);
+    r.enter();
+    ++r.pos;
+    EndpointDescription v;
+    std::map<std::string, bool> unknown_keys;
+    std::optional<std::string> wire_outcome;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "outcome") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                wire_outcome = r.str();
+            } else if (key == "program") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.program = r.str();
+            } else if (key == "version") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.version = r.str();
+            } else if (key == "services") {
+                if (seen & 8u) r.refuse("duplicate_field");
+                seen |= 8u;
+                v.services = decode_list<EndpointServiceState>(r, decode_endpoint_service_state);
+            } else if (key == "refusal") {
+                if (seen & 16u) r.refuse("duplicate_field");
+                seen |= 16u;
+                v.refusal = decode_endpoint_refusal_detail(r);
+            } else if (key == "reason") {
+                if (seen & 32u) r.refuse("duplicate_field");
+                seen |= 32u;
+                v.reason = r.str();
+            } else if (key == "checks") {
+                if (seen & 64u) r.refuse("duplicate_field");
+                seen |= 64u;
+                v.checks = decode_list<EndpointProducerCheck>(r, decode_endpoint_producer_check);
+            } else {
+                if (!unknown_keys.emplace(key, true).second) r.refuse("duplicate_key");
+                r.skip_value();
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 47u) != 47u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.program.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.version.size()); n > 256ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.services.size()); n > 64ULL) r.refuse("bad_value");
+    if (const auto n = static_cast<std::uint64_t>(v.reason.size()); n > 256ULL) r.refuse("bad_value");
+    for (std::size_t i = 0; i < v.reason.size(); ++i) { const auto c = static_cast<unsigned char>(v.reason[i]); if (c < 0x20 || c == 0x7f || (c == 0xc2 && i + 1 < v.reason.size() && static_cast<unsigned char>(v.reason[i + 1]) <= 0x9f)) r.refuse("bad_value"); }
+    if (const auto n = static_cast<std::uint64_t>(v.checks.size()); n > 64ULL) r.refuse("bad_value");
+    if (wire_outcome) {
+        const auto parsed = parse_endpoint_description_outcome(*wire_outcome);
+        if (!parsed) r.refuse("bad_enum");
+        v.outcome = *parsed;
+    }
+    return v;
+}
+
+inline EndpointDescriptionResult decode_endpoint_description_result(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    EndpointDescriptionResult v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "value") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.value = decode_endpoint_description(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
+    return v;
+}
+
+inline OARouterModalitiesArguments decode_oa_router_modalities_arguments(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterModalitiesArguments v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "cursor") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.cursor = r.str();
+            } else if (key == "limit") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.limit = r.integer(INT64_MIN, INT64_MAX);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 3u) != 3u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) r.refuse("bad_value");
     return v;
 }
 
@@ -2756,6 +4859,50 @@ inline OARouterOfferArguments decode_oa_router_offer_arguments(Reader& r) {
     return v;
 }
 
+inline OARouterObserveOfferArguments decode_oa_router_observe_offer_arguments(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterObserveOfferArguments v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "request") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.request = decode_offer_request(r);
+            } else if (key == "cursor") {
+                if (seen & 2u) r.refuse("duplicate_field");
+                seen |= 2u;
+                v.cursor = r.str();
+            } else if (key == "wait_ms") {
+                if (seen & 4u) r.refuse("duplicate_field");
+                seen |= 4u;
+                v.wait_ms = r.integer(INT64_MIN, INT64_MAX);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 7u) != 7u) r.refuse("missing_field");
+    if (const auto n = static_cast<std::uint64_t>(v.cursor.size()); n > 256ULL) r.refuse("bad_value");
+    return v;
+}
+
 inline OAServiceFrame decode_oa_service_frame(Reader& r) {
     if (r.at() != '{') r.refuse("wrong_type");
     r.enter();
@@ -2890,6 +5037,41 @@ inline OAServiceError decode_oa_service_error(Reader& r) {
     ++r.pos;
     --r.depth;
     if ((seen & 3u) != 3u) r.refuse("missing_field");
+    return v;
+}
+
+inline OARouterModalitiesResult decode_oa_router_modalities_result(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterModalitiesResult v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "value") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.value = decode_modality_page(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
     return v;
 }
 
@@ -3033,6 +5215,41 @@ inline OARouterOfferResult decode_oa_router_offer_result(Reader& r) {
     return v;
 }
 
+inline OARouterObserveOfferResult decode_oa_router_observe_offer_result(Reader& r) {
+    if (r.at() != '{') r.refuse("wrong_type");
+    r.enter();
+    ++r.pos;
+    OARouterObserveOfferResult v;
+    std::uint32_t seen = 0;
+    r.skip_ws();
+    if (r.at() != '}') {
+        for (;;) {
+            r.skip_ws();
+            if (r.at() != '"') r.refuse("malformed");
+            const std::string key = r.str();
+            r.skip_ws();
+            if (r.at() != ':') r.refuse("malformed");
+            ++r.pos;
+            r.skip_ws();
+            if (key == "value") {
+                if (seen & 1u) r.refuse("duplicate_field");
+                seen |= 1u;
+                v.value = decode_offer_observation(r);
+            } else {
+                r.refuse("unknown_field");
+            }
+            r.skip_ws();
+            if (r.at() != ',') break;
+            ++r.pos;
+        }
+    }
+    if (r.at() != '}') r.refuse("malformed");
+    ++r.pos;
+    --r.depth;
+    if ((seen & 1u) != 1u) r.refuse("missing_field");
+    return v;
+}
+
 }  // namespace detail
 
 inline std::string encode(const PickRequest& v) {
@@ -3051,9 +5268,434 @@ inline PickRequest decode(std::string_view data) {
     return v;
 }
 
+// to_json writes one record as JSON, laid out as this definition's documents
+// are and without the document terminator; from_json<T> reads one and throws
+// Refusal for what the record's reader refuses.
+template <class T> T from_json(std::string_view data);
+
+inline std::string to_json(const HostAllowance& v) {
+    std::string out;
+    detail::enc_host_allowance(out, v, 0);
+    return out;
+}
+
+template <> inline HostAllowance from_json<HostAllowance>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    HostAllowance v = detail::decode_host_allowance(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const PickRequest& v) {
+    std::string out;
+    detail::enc_pick_request(out, v, 0);
+    return out;
+}
+
+template <> inline PickRequest from_json<PickRequest>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    PickRequest v = detail::decode_pick_request(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Caller& v) {
+    std::string out;
+    detail::enc_caller(out, v, 0);
+    return out;
+}
+
+template <> inline Caller from_json<Caller>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Caller v = detail::decode_caller(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Observation& v) {
+    std::string out;
+    detail::enc_observation(out, v, 0);
+    return out;
+}
+
+template <> inline Observation from_json<Observation>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Observation v = detail::decode_observation(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ReasoningSupport& v) {
+    std::string out;
+    detail::enc_reasoning_support(out, v, 0);
+    return out;
+}
+
+template <> inline ReasoningSupport from_json<ReasoningSupport>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ReasoningSupport v = detail::decode_reasoning_support(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ModelCapabilities& v) {
+    std::string out;
+    detail::enc_model_capabilities(out, v, 0);
+    return out;
+}
+
+template <> inline ModelCapabilities from_json<ModelCapabilities>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ModelCapabilities v = detail::decode_model_capabilities(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Alias& v) {
+    std::string out;
+    detail::enc_alias(out, v, 0);
+    return out;
+}
+
+template <> inline Alias from_json<Alias>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Alias v = detail::decode_alias(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Component& v) {
+    std::string out;
+    detail::enc_component(out, v, 0);
+    return out;
+}
+
+template <> inline Component from_json<Component>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Component v = detail::decode_component(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Engine& v) {
+    std::string out;
+    detail::enc_engine(out, v, 0);
+    return out;
+}
+
+template <> inline Engine from_json<Engine>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Engine v = detail::decode_engine(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ModelEngine& v) {
+    std::string out;
+    detail::enc_model_engine(out, v, 0);
+    return out;
+}
+
+template <> inline ModelEngine from_json<ModelEngine>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ModelEngine v = detail::decode_model_engine(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ModelObject& v) {
+    std::string out;
+    detail::enc_model_object(out, v, 0);
+    return out;
+}
+
+template <> inline ModelObject from_json<ModelObject>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ModelObject v = detail::decode_model_object(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Family& v) {
+    std::string out;
+    detail::enc_family(out, v, 0);
+    return out;
+}
+
+template <> inline Family from_json<Family>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Family v = detail::decode_family(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ModelsSnapshot& v) {
+    std::string out;
+    detail::enc_models_snapshot(out, v, 0);
+    return out;
+}
+
+template <> inline ModelsSnapshot from_json<ModelsSnapshot>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ModelsSnapshot v = detail::decode_models_snapshot(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const HostState& v) {
+    std::string out;
+    detail::enc_host_state(out, v, 0);
+    return out;
+}
+
+template <> inline HostState from_json<HostState>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    HostState v = detail::decode_host_state(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Ask& v) {
+    std::string out;
+    detail::enc_ask(out, v, 0);
+    return out;
+}
+
+template <> inline Ask from_json<Ask>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Ask v = detail::decode_ask(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const HostsSnapshot& v) {
+    std::string out;
+    detail::enc_hosts_snapshot(out, v, 0);
+    return out;
+}
+
+template <> inline HostsSnapshot from_json<HostsSnapshot>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    HostsSnapshot v = detail::decode_hosts_snapshot(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Decision& v) {
+    std::string out;
+    detail::enc_decision(out, v, 0);
+    return out;
+}
+
+template <> inline Decision from_json<Decision>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Decision v = detail::decode_decision(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const PickResult& v) {
+    std::string out;
+    detail::enc_pick_result(out, v, 0);
+    return out;
+}
+
+template <> inline PickResult from_json<PickResult>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    PickResult v = detail::decode_pick_result(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const OfferRequest& v) {
+    std::string out;
+    detail::enc_offer_request(out, v, 0);
+    return out;
+}
+
+template <> inline OfferRequest from_json<OfferRequest>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    OfferRequest v = detail::decode_offer_request(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const Offer& v) {
+    std::string out;
+    detail::enc_offer(out, v, 0);
+    return out;
+}
+
+template <> inline Offer from_json<Offer>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    Offer v = detail::decode_offer(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const OfferSnapshot& v) {
+    std::string out;
+    detail::enc_offer_snapshot(out, v, 0);
+    return out;
+}
+
+template <> inline OfferSnapshot from_json<OfferSnapshot>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    OfferSnapshot v = detail::decode_offer_snapshot(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const OfferObservation& v) {
+    std::string out;
+    detail::enc_offer_observation(out, v, 0);
+    return out;
+}
+
+template <> inline OfferObservation from_json<OfferObservation>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    OfferObservation v = detail::decode_offer_observation(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const ModalityPage& v) {
+    std::string out;
+    detail::enc_modality_page(out, v, 0);
+    return out;
+}
+
+template <> inline ModalityPage from_json<ModalityPage>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    ModalityPage v = detail::decode_modality_page(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const EndpointRefusalDetail& v) {
+    std::string out;
+    detail::enc_endpoint_refusal_detail(out, v, 0);
+    return out;
+}
+
+template <> inline EndpointRefusalDetail from_json<EndpointRefusalDetail>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    EndpointRefusalDetail v = detail::decode_endpoint_refusal_detail(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const EndpointProducerCheck& v) {
+    std::string out;
+    detail::enc_endpoint_producer_check(out, v, 0);
+    return out;
+}
+
+template <> inline EndpointProducerCheck from_json<EndpointProducerCheck>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    EndpointProducerCheck v = detail::decode_endpoint_producer_check(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const EndpointServiceState& v) {
+    std::string out;
+    detail::enc_endpoint_service_state(out, v, 0);
+    return out;
+}
+
+template <> inline EndpointServiceState from_json<EndpointServiceState>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    EndpointServiceState v = detail::decode_endpoint_service_state(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const EndpointDescription& v) {
+    std::string out;
+    detail::enc_endpoint_description(out, v, 0);
+    return out;
+}
+
+template <> inline EndpointDescription from_json<EndpointDescription>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    EndpointDescription v = detail::decode_endpoint_description(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
+inline std::string to_json(const EndpointDescriptionResult& v) {
+    std::string out;
+    detail::enc_endpoint_description_result(out, v, 0);
+    return out;
+}
+
+template <> inline EndpointDescriptionResult from_json<EndpointDescriptionResult>(std::string_view data) {
+    detail::Reader r{data};
+    r.skip_ws();
+    EndpointDescriptionResult v = detail::decode_endpoint_description_result(r);
+    r.skip_ws();
+    if (r.pos < r.buf.size()) r.refuse("trailing_bytes");
+    return v;
+}
+
 namespace detail {
 // kRefusals is in the order two of them are chosen between.
-inline const std::vector<std::string> kRefusals = {"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"};
+inline const std::vector<std::string> kRefusals = {"malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "bad_value", "trailing_bytes"};
 
 inline int refusal_rank(std::string_view word) {
     for (std::size_t i = 0; i < kRefusals.size(); ++i)
@@ -3084,24 +5726,43 @@ inline std::string service_reply(const OAServiceFrame& request,const Raw& payloa
 
 // The base-protocol service every dispatcher answers beside its own.
 inline constexpr std::string_view kEndpointContract="abstraction.facade/endpoint@1";
+inline constexpr std::string_view kEndpointV2Contract="abstraction.facade/endpoint@2";
 // One service an endpoint hosts, as a dispatcher of any generated namespace
 // reports it to describe_endpoint.
 struct DescribedService{std::string contract;bool ready;std::string why;};
 namespace detail {
 template<class H>auto ready_hook(int)->decltype((void)static_cast<H*>(nullptr)->ready(),static_cast<bool(*)(void*,std::string&)>(nullptr)){return [](void* h,std::string& why)->bool{auto r=static_cast<H*>(h)->ready();why=r.second;return r.first;};}
 template<class H>bool(*ready_hook(long))(void*,std::string&){return nullptr;}
+using EndpointMetadata=std::pair<std::vector<std::string>,std::map<std::string,std::string>>;
+template<class H>auto metadata_hook(int)->decltype((void)static_cast<H*>(nullptr)->describe_metadata(),static_cast<EndpointMetadata(*)(void*)>(nullptr)){return [](void*h)->EndpointMetadata{return static_cast<H*>(h)->describe_metadata();};}
+template<class H>EndpointMetadata(*metadata_hook(long))(void*){return nullptr;}
+template<class S>auto described_hash(const S&s,int)->decltype(s.describe_service_definition_hash()){return s.describe_service_definition_hash();}
+template<class S>std::string described_hash(const S&,long){return std::string();}
+template<class S>auto described_metadata(const S&s,int)->decltype(s.describe_service_metadata()){return s.describe_service_metadata();}
+template<class S>std::pair<std::vector<std::string>,std::map<std::string,std::string>> described_metadata(const S&,long){return {};}
 }  // namespace detail
 // Answers an abstraction.facade/endpoint@1 Describe frame for an endpoint
 // hosting services, in that order: each is a dispatcher of any generated
 // namespace. program and version are the provider's own display name and
 // version, never authority. A frame for another service reads unknown_service.
-template<class... Services>std::string describe_endpoint(std::string_view frame,const std::string& program,const std::string& version,const Services&... services){
+template<class... Services>std::string describe_endpoint_with_checks(std::string_view frame,const std::string& program,const std::string& version,const std::vector<EndpointProducerCheck>& checks,const Services&... services){
  auto v=detail::service_payload(frame);
- if(v.service!=kEndpointContract){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
+ if(v.service!=kEndpointContract&&v.service!=kEndpointV2Contract){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
  if(v.method!="Describe"){ServiceError e("unknown_method","");return detail::service_reply(v,"",&e);}
  detail::Reader r{v.arguments};r.skip_ws();bool empty=false;
  if(r.pos<r.buf.size()&&r.buf[r.pos]=='{'){r.pos++;r.skip_ws();if(r.pos<r.buf.size()&&r.buf[r.pos]=='}'){r.pos++;r.skip_ws();empty=r.pos==r.buf.size();}}
  if(!empty){ServiceError e("unknown_field","");return detail::service_reply(v,"",&e);}
+ if(v.service==kEndpointV2Contract){
+  auto bounded=[&](){EndpointDescriptionResult result;result.value.outcome=EndpointDescriptionOutcome::Unavailable;result.value.reason="bound:reply_bytes";Raw payload;detail::enc_endpoint_description_result(payload,result,1);return detail::service_reply(v,payload);};
+  try{
+   EndpointDescriptionResult result;auto& description=result.value;description.outcome=EndpointDescriptionOutcome::Described;description.program=program;description.version=version;description.checks=checks;
+   bool supported=true;auto add=[&](const auto& service){auto s=service.describe_service();EndpointServiceState state;state.service=s.contract;state.readiness=s.ready?EndpointServiceReadiness::Ready:EndpointServiceReadiness::NotReady;state.reason=s.ready?std::string():s.why;state.definition_hash=detail::described_hash(service,0);if(state.definition_hash.empty())supported=false;auto metadata=detail::described_metadata(service,0);state.guarantees=metadata.first;state.capabilities=metadata.second;description.services.push_back(state);};
+   (void)add;(add(services),...);
+   if(!supported){description={};description.outcome=EndpointDescriptionOutcome::Unsupported;description.reason="unsupported:not_implemented";}
+   Raw payload;detail::enc_endpoint_description_result(payload,result,1);detail::Reader reader{payload};reader.depth=1;detail::decode_endpoint_description_result(reader);
+   auto reply=detail::service_reply(v,payload);if(reply.size()>1048576)return bounded();return reply;
+  }catch(const Refusal&){return bounded();}
+ }
  try{
   Raw out="{\"value\":{\"outcome\":\"described\",\"program\":";detail::esc(out,program);out+=",\"version\":";detail::esc(out,version);out+=",\"services\":[";
   bool first=true;
@@ -3112,13 +5773,23 @@ template<class... Services>std::string describe_endpoint(std::string_view frame,
   return detail::service_reply(v,out);
  }catch(const Refusal&e){ServiceError error(e.word,"");return detail::service_reply(v,"",&error);}
 }
+template<class... Services>std::string describe_endpoint(std::string_view frame,const std::string& program,const std::string& version,const Services&... services){return describe_endpoint_with_checks(frame,program,version,std::vector<EndpointProducerCheck>{},services...);}
 struct Router{virtual ~Router()=default;
+virtual ModalityPage modalities(const std::string& cursor,const std::int64_t& limit)=0;
 virtual ModelsSnapshot models(const bool& fresh)=0;
 virtual HostsSnapshot hosts(const bool& fresh)=0;
 virtual PickResult pick(const PickRequest& request)=0;
 virtual OfferSnapshot offer(const OfferRequest& request)=0;
+virtual OfferObservation observe_offer(const OfferRequest& request,const std::string& cursor,const std::int64_t& wait_ms)=0;
 };
 template<class Transport>struct RouterClient:Router{Transport& transport_;explicit RouterClient(Transport&t):transport_(t){}
+ModalityPage modalities(const std::string& cursor,const std::int64_t& limit)override{detail::OARouterModalitiesArguments args;
+args.cursor=cursor;
+args.limit=limit;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Modalities";detail::enc_oa_router_modalities_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_modalities_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+return result.value;
+}
 ModelsSnapshot models(const bool& fresh)override{detail::OARouterModelsArguments args;
 args.fresh=fresh;
 detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="Models";detail::enc_oa_router_models_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
@@ -3143,14 +5814,26 @@ detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.m
 auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
 return result.value;
 }
+OfferObservation observe_offer(const OfferRequest& request,const std::string& cursor,const std::int64_t& wait_ms)override{detail::OARouterObserveOfferArguments args;
+args.request=request;
+args.cursor=cursor;
+args.wait_ms=wait_ms;
+detail::OAServiceFrame v;v.version=1;v.service="abstraction.router/router@1";v.method="ObserveOffer";detail::enc_oa_router_observe_offer_arguments(v.arguments,args,1);std::string frame;detail::enc_oa_service_frame(frame,v,0);detail::service_payload(frame);
+auto response=transport_.exchange_frame(frame);auto payload=detail::service_response(response,v.service,v.method);detail::Reader r{payload};r.depth=1;r.skip_ws();auto result=detail::decode_oa_router_observe_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");
+return result.value;
+}
 };
 struct RouterService{inline static constexpr std::string_view kWireName="abstraction.router/router@1";inline static constexpr std::string_view kCapability="abstraction.router";template<class Transport>using Client=RouterClient<Transport>;};
 struct RouterDispatcher:FrameWriter,FrameExchanger{Router&handler;explicit RouterDispatcher(Router&h):handler(h){}
 // A handler whose own type has ready(), returning a pair of bool and std::string, reports its readiness through describe_service.
-template<class H,class=decltype(static_cast<Router&>(*static_cast<H*>(nullptr)))>explicit RouterDispatcher(H&h):handler(h),ready_self_(&h),ready_hook_(detail::ready_hook<H>(0)){}
+template<class H,class=decltype(static_cast<Router&>(*static_cast<H*>(nullptr)))>explicit RouterDispatcher(H&h):handler(h),ready_self_(&h),ready_hook_(detail::ready_hook<H>(0)),metadata_hook_(detail::metadata_hook<H>(0)){}
 // This dispatcher's service as abstraction.facade/endpoint@1 Describe lists it.
 DescribedService describe_service()const{DescribedService s{"abstraction.router/router@1",true,std::string()};if(ready_hook_){s.ready=ready_hook_(ready_self_,s.why);if(s.ready)s.why.clear();}return s;}
+std::string describe_service_definition_hash()const{return "sha256:8a9045daebcf3d01392413bf80f4b023134004c28aac079a74dfd5140c73c47d";}
+std::pair<std::vector<std::string>,std::map<std::string,std::string>> describe_service_metadata()const{if(metadata_hook_)return metadata_hook_(ready_self_);return {};}
 void write_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service!="abstraction.router/router@1")throw DispatchError("unknown_service");
+if(v.method=="Modalities"){
+throw DispatchError("wrong_mode");}
 if(v.method=="Models"){
 throw DispatchError("wrong_mode");}
 if(v.method=="Hosts"){
@@ -3159,9 +5842,13 @@ if(v.method=="Pick"){
 throw DispatchError("wrong_mode");}
 if(v.method=="Offer"){
 throw DispatchError("wrong_mode");}
+if(v.method=="ObserveOffer"){
+throw DispatchError("wrong_mode");}
 throw DispatchError("unknown_method");}
-std::string exchange_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service==kEndpointContract)return describe_endpoint(frame,std::string(),std::string(),*this);if(v.service!="abstraction.router/router@1"){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
+std::string exchange_frame(std::string_view frame)override{auto v=detail::service_payload(frame);if(v.service==kEndpointContract)return describe_endpoint(frame,std::string(),std::string(),*this);if(v.service==kEndpointV2Contract)return describe_endpoint(frame,std::string(),std::string(),*this);if(v.service!="abstraction.router/router@1"){ServiceError e("unknown_service","");return detail::service_reply(v,"",&e);}
 try{
+if(v.method=="Modalities"){
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_modalities_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_modalities(args);return detail::service_reply(v,payload);}
 if(v.method=="Models"){
 detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_models_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_models(args);return detail::service_reply(v,payload);}
 if(v.method=="Hosts"){
@@ -3170,9 +5857,22 @@ if(v.method=="Pick"){
 detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_pick_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_pick(args);return detail::service_reply(v,payload);}
 if(v.method=="Offer"){
 detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_offer_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_offer(args);return detail::service_reply(v,payload);}
+if(v.method=="ObserveOffer"){
+detail::Reader r{v.arguments};r.depth=1;r.skip_ws();auto args=detail::decode_oa_router_observe_offer_arguments(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");auto payload=invoke_observe_offer(args);return detail::service_reply(v,payload);}
 throw ServiceError("unknown_method","");}catch(const ServiceError&e){return detail::service_reply(v,"",&e);}catch(const Refusal&e){ServiceError error(e.word,"");return detail::service_reply(v,"",&error);}
 }
 private:
+Raw invoke_modalities(const detail::OARouterModalitiesArguments&args){
+ModalityPage result{};
+try{
+result=handler.modalities(args.cursor,args.limit);
+}catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
+try{
+detail::OARouterModalitiesResult value;
+value.value=result;
+Raw payload;detail::enc_oa_router_modalities_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_modalities_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+}catch(...){throw ServiceError("invalid_result","");}
+}
 Raw invoke_models(const detail::OARouterModelsArguments&args){
 ModelsSnapshot result{};
 try{
@@ -3217,9 +5917,21 @@ value.value=result;
 Raw payload;detail::enc_oa_router_offer_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
 }catch(...){throw ServiceError("invalid_result","");}
 }
+Raw invoke_observe_offer(const detail::OARouterObserveOfferArguments&args){
+OfferObservation result{};
+try{
+result=handler.observe_offer(args.request,args.cursor,args.wait_ms);
+}catch(const ServiceError&){throw;}catch(...){throw ServiceError("handler_error","handler failed");}
+try{
+detail::OARouterObserveOfferResult value;
+value.value=result;
+Raw payload;detail::enc_oa_router_observe_offer_result(payload,value,1);detail::Reader r{payload};r.depth=1;r.skip_ws();detail::decode_oa_router_observe_offer_result(r);r.skip_ws();if(r.pos!=r.buf.size())r.refuse("trailing_bytes");return payload;
+}catch(...){throw ServiceError("invalid_result","");}
+}
 private:
 void* ready_self_=nullptr;
 bool(*ready_hook_)(void*,std::string&)=nullptr;
+std::pair<std::vector<std::string>,std::map<std::string,std::string>>(*metadata_hook_)(void*)=nullptr;
 };
 
 }  // namespace abstraction::router

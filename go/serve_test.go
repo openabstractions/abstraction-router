@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,7 +38,7 @@ func TestServeHelp(t *testing.T) {
 	if first != "Usage: openabstractions serve router [options]" {
 		t.Fatalf("first line = %q", first)
 	}
-	if strings.Contains(out, DefaultEndpoint()) {
+	if endpoint := DefaultEndpoint(); endpoint != "" && strings.Contains(out, endpoint) {
 		t.Fatalf("usage names this machine's resolved endpoint: %s", out)
 	}
 }
@@ -46,5 +47,15 @@ func TestServeBadFlagReturnsErrUsage(t *testing.T) {
 	err := Serve([]string{"--not-a-real-flag"})
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrUsage)", err)
+	}
+}
+
+func TestServeWindowRefusesBeforeEndpointStart(t *testing.T) {
+	endpoint := filepath.Join(t.TempDir(), "never-opened.sock")
+	if err := Serve([]string{"--endpoint", endpoint, "--window", "127.0.0.1:0"}); err != errWindowRetired {
+		t.Fatal("window did not refuse before Start", err)
+	}
+	if _, err := os.Lstat(endpoint); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("retired window created endpoint", err)
 	}
 }

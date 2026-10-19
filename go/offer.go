@@ -104,7 +104,7 @@ func (r *Router) Offer(req Request) ([]Offer, time.Time, error) {
 // on this machine.
 func (r *Router) OfferContext(ctx context.Context, req Request) ([]Offer, time.Time, error) {
 	if req.Fresh {
-		if err := r.SurveyContext(ctx); err != nil {
+		if err := r.freshSurvey(ctx); err != nil {
 			return nil, time.Time{}, err
 		}
 	}
@@ -137,6 +137,13 @@ func (r *Router) OfferContext(ctx context.Context, req Request) ([]Offer, time.T
 	answered := map[string]bool{}
 	for _, h := range hosts {
 		if h.remote == nil || !h.Servable() || !admits(req.Placement, h) {
+			continue
+		}
+		// A paired runtime the clock is backing off from counts nothing
+		// until a fresh call or its backoff ends (ROUTE-D12): it is not
+		// dialled once a minute per watched request.
+		if !req.Fresh && r.cadence.backingOff(h, time.Now()) {
+			answered[h.Name] = true
 			continue
 		}
 		remoteCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -200,7 +207,7 @@ func (r *Router) OfferContext(ctx context.Context, req Request) ([]Offer, time.T
 
 	offers := make([]Offer, 0, len(folds))
 	for family, f := range folds {
-		o := Offer{Family: family}
+		o := Offer{Family: family, Title: r.familyTitle(family)}
 		for name := range f.names {
 			o.Names = append(o.Names, name)
 		}

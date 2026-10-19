@@ -12,6 +12,30 @@ import (
 	"time"
 )
 
+// Live checks use endpoint inputs supplied by the operator. Knowing a product's
+// default port does not establish that it exists on the test machine.
+func liveHosts(t *testing.T) []*Host {
+	t.Helper()
+	var hosts []*Host
+	for _, item := range []struct {
+		variable string
+		makeHost func(string) *Host
+	}{
+		{"ROUTER_LIVE_LEMONADE_BASE", Lemonade},
+		{"ROUTER_LIVE_LMSTUDIO_BASE", LMStudio},
+		{"ROUTER_LIVE_OLLAMA_BASE", Ollama},
+		{"ROUTER_LIVE_COMFYUI_BASE", func(base string) *Host { return ComfyUI(base) }},
+	} {
+		if base := os.Getenv(item.variable); base != "" {
+			hosts = append(hosts, item.makeHost(base))
+		}
+	}
+	if len(hosts) == 0 {
+		t.Skip("set an explicit ROUTER_LIVE_<PRODUCT>_BASE for live host checks")
+	}
+	return hosts
+}
+
 // TestLive answers the three questions against the hosts actually installed on
 // this machine, times every answer against the 200 ms discovery budget, and
 // shows what an unidentifiable caller gets. It loads nothing: the only request
@@ -24,8 +48,8 @@ func TestLive(t *testing.T) {
 	}
 	t.Log("STATE: " + powerState())
 
-	r := New(Installed()...)
-	endpoint := DefaultEndpoint() + "-live"
+	r := New(liveHosts(t)...)
+	endpoint := routerFixtureEndpoint(t, "live")
 	s, err := Start(endpoint, r)
 	if err != nil {
 		t.Fatal(err)
@@ -80,10 +104,10 @@ func TestLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := route.Decision
-	t.Logf("ANSWER 3 — %q -> %s: %s %s (%s), loads %d", want, d.Family, d.Verdict, d.Host, d.Endpoint, d.Loads)
+	t.Logf("ANSWER 3 — %q -> %s: %s %s, loads %d", want, d.Family, d.Verdict, d.Host, d.Loads)
 	t.Logf("  installed on %v; %s", d.InstalledOn, d.Why)
 
-	for _, h := range Installed() {
+	for _, h := range liveHosts(t) {
 		start := time.Now()
 		installed, err := h.installed(context.Background(), h)
 		t.Logf("READ    %-9s %4d names in %6.1f ms  %v", h.Name, len(installed), ms(time.Since(start)), err)
@@ -101,7 +125,7 @@ func TestLive(t *testing.T) {
 
 	if d.Verdict == Resident {
 		start, _ := c.Ask(Request{Op: OpResidency, Fresh: true})
-		served, err := oneToken(d.Endpoint, d.Model)
+		served, err := oneToken(chatAddresses(New(liveHosts(t)...))(d.Host), d.Model)
 		after, _ := c.Ask(Request{Op: OpResidency, Fresh: true})
 		t.Logf("SERVED  %s answered from the copy it already had: %s (err %v)", d.Host, served, err)
 		// Another task on this machine is loading weights of its own, so the
@@ -112,13 +136,9 @@ func TestLive(t *testing.T) {
 		}
 	}
 
-	l, err := Window("127.0.0.1:0", r)
-	if err != nil {
-		t.Fatal(err)
+	if l, err := Window("127.0.0.1:0", r); err == nil || l != nil {
+		t.Fatal("retired window opened", l, err)
 	}
-	defer l.Close()
-	t.Logf("REFUSED %s", get(t, "http://"+l.Addr().String()+"/route?model="+want))
-	t.Logf("ALLOWED %.120s", get(t, "http://"+l.Addr().String()+"/models"))
 }
 
 func latency(t *testing.T, c *Client, req Request) (lo, mid, hi time.Duration) {

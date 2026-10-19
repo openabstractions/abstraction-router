@@ -4,6 +4,10 @@ import (
 	"errors"
 	router "github.com/openabstractions/abstraction-router/go"
 	wire "github.com/openabstractions/abstraction-router/go/abstraction/router"
+	"github.com/openabstractions/abstraction-router/go/internal/personfolders"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +58,21 @@ func TestServeRejectsInvalidFlags(t *testing.T) {
 	for _, args := range [][]string{{"--survey=0"}, {"--survey=-1s"}, {"extra"}} {
 		if err := Serve(args); err == nil {
 			t.Fatal(args)
+		}
+	}
+}
+
+func TestMain(m *testing.M) { os.Exit(personfolders.Main(m)) }
+
+func TestPersonFoldersStandIn(t *testing.T) {
+	person := os.Getenv("OA_TEST_PERSON")
+	if person == "" {
+		t.Fatal("test package has no stand-in person")
+	}
+	for _, key := range []string{"HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"} {
+		rel, err := filepath.Rel(person, os.Getenv(key))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			t.Fatalf("%s escapes stand-in: %q (%v)", key, rel, err)
 		}
 	}
 }

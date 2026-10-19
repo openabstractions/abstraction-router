@@ -45,53 +45,9 @@ def _strs(out, v, depth):
 
 
 def _raw(out, s, depth):
-    b = s.encode("utf-8") if isinstance(s, str) else s
-    i, n = 0, len(b)
-    while i < n:
-        c = b[i]
-        if c in _WS:
-            i += 1
-        elif c == 0x22:
-            j = i + 1
-            while j < n:
-                if b[j] == 0x5C:
-                    j += 2
-                    continue
-                if b[j] == 0x22:
-                    j += 1
-                    break
-                j += 1
-            out += b[i:j]
-            i = j
-        elif c in (0x7B, 0x5B):
-            out.append(c)
-            i += 1
-            j = i
-            while j < n and b[j] in _WS:
-                j += 1
-            if j < n and b[j] in (0x7D, 0x5D):
-                out.append(b[j])
-                i = j + 1
-            else:
-                depth += 1
-                out += b"\n"
-                _pad(out, depth)
-        elif c in (0x7D, 0x5D):
-            depth -= 1
-            out += b"\n"
-            _pad(out, depth)
-            out.append(c)
-            i += 1
-        elif c == 0x2C:
-            out += b",\n"
-            _pad(out, depth)
-            i += 1
-        elif c == 0x3A:
-            out += b": "
-            i += 1
-        else:
-            out.append(c)
-            i += 1
+    # An opaque value's bytes as they are ([DEF-A3]).
+    # Whitespace around the value is not part of it.
+    out += (s.encode("utf-8") if isinstance(s, str) else bytes(s)).strip(bytes(_WS))
 
 
 def _rawmap(out, m, depth):
@@ -157,6 +113,21 @@ def _open_enum(cls, value):
         return value
 
 
+class ReasoningEffort(_StrEnum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class EngineCause(_StrEnum):
+    BOUND = "bound"
+    SOURCE_ONLY = "source_only"
+    INCOMPATIBLE = "incompatible"
+    UNKNOWN = "unknown"
+    OTHER = "other"
+
+
 class AvailabilityCause(_StrEnum):
     TRANSPORT_UNAVAILABLE = "transport_unavailable"
     CREDENTIAL = "credential"
@@ -189,6 +160,15 @@ class OfferOutcome(_StrEnum):
     NOT_PERMITTED = "not_permitted"
 
 
+class ModalityOutcome(_StrEnum):
+    PAGE = "page"
+    GAP = "gap"
+    INVALID = "invalid"
+    FORBIDDEN = "forbidden"
+    UNAVAILABLE = "unavailable"
+    NOT_PERMITTED = "not_permitted"
+
+
 class ServiceErrorCode(_StrEnum):
     HANDLER_ERROR = "handler_error"
     INVALID_RESULT = "invalid_result"
@@ -204,7 +184,7 @@ class ServiceErrorCode(_StrEnum):
     FORBIDDEN = "forbidden"
 
 
-PROFILES = ["chat", "embed", "transcription", "speech", "image"]
+PROFILES = ["chat", "embed", "transcription", "speech", "image", "live", "video"]
 
 
 VERDICTS = ["resident", "would-load", "hosted", "unservable", "not-here", "unparseable", "unauthorised", "no-host"]
@@ -237,6 +217,11 @@ class PickRequest:
 
 @dataclasses.dataclass(kw_only=True)
 class Caller:
+    """[Caller](https://openabstractions.github.io/reference.html#concept-router.caller-description).
+    Diagnostic user and path descriptions observed by the server. They are
+    display information, not stable identifiers, filesystem paths or
+    authorization proof, and are never accepted as request claims."""
+
     user_description: str = ""
     path_description: str = ""
 
@@ -249,23 +234,52 @@ class Observation:
 
 
 @dataclasses.dataclass(kw_only=True)
+class ReasoningSupport:
+    """The reasoning controls a model takes. efforts are the chat@3 effort words it
+    answers to, approximated ones included; budget is true when it also takes a
+    reasoning token budget; default_effort is what it reasons at when the caller
+    names none."""
+
+    efforts: list[ReasoningEffort | str] = dataclasses.field(default_factory=list)
+    budget: bool = False
+    default_effort: ReasoningEffort | None = None
+
+
+@dataclasses.dataclass(kw_only=True)
+class ModelCapabilities:
+    """What one alias on its host takes and gives: input and output modalities
+    (text, image, audio, video), tool calls, structured output, its reasoning
+    controls and the chat@3 extension names it supports. Sources in order: the
+    catalogue entry for the model, then the engine's own facts (a loaded vision
+    projector, the chat template's tool section), then the hosted provider's
+    model listing. A fact no source states is absent, never guessed. Display
+    data; it grants nothing."""
+
+    input: list[str] = dataclasses.field(default_factory=list)
+    output: list[str] = dataclasses.field(default_factory=list)
+    tools: bool | None = None
+    structured_output: bool | None = None
+    reasoning: ReasoningSupport | None = None
+    extensions: list[str] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(kw_only=True)
 class Alias:
-    """hosted is true for a name read from a hosted host's model listing; such a
-    name is never resident. profiles are what the host's own model metadata says
-    this name serves (LM Studio's type, Ollama's capabilities); empty when the
-    host reports none, and then its HostState profiles apply. held_in names the
-    storage inventory stores holding an object this alias's own name or digest
-    matches, in store order; empty when no store's object matches this name.
-    host is empty exactly for a name no host serves, which a store holds and
-    which is never resident or servable. context_length is the model's maximum
-    supported context window in tokens, read from host metadata without loading
-    it (LM Studio's max_context_length, Ollama's model_info context_length,
-    Lemonade's max_context_window); zero when the host reports none.
-    effective_context_length is a positive per-request context limit the host
-    currently reports: the loaded value when the model is resident, otherwise
-    its configured value when the host reports one (Lemonade's context_length);
-    zero when unknown. A nonpositive or contradictory effective value is
-    omitted."""
+    """[Alias](https://openabstractions.github.io/reference.html#concept-router.alias):
+    capabilities are this alias's own on its host, never merged with the same
+    family on another host. hosted is true for a name read from a hosted host's
+    model listing; such a name is never resident. profiles are what the host's
+    own model metadata says this name serves; empty when the host reports none,
+    and then its HostState profiles apply. held_in names the storage inventory
+    stores holding an object this alias's own name or digest matches, in store
+    order; empty when no store's object matches this name. host is empty exactly
+    for a name no host serves, which a store holds and which is never resident
+    or servable. context_length is the model's maximum supported context window
+    in tokens, read from host metadata without loading it; zero when the host
+    reports none. effective_context_length is a positive per-request context
+    limit the host currently reports: the loaded value when the model is
+    resident, otherwise its configured value when the host reports one; zero
+    when unknown. A nonpositive or contradictory effective value is omitted."""
 
     host: str = ""
     name: str = ""
@@ -276,15 +290,19 @@ class Alias:
     held_in: list[str] = dataclasses.field(default_factory=list)
     context_length: int = 0
     effective_context_length: int = 0
+    capabilities: ModelCapabilities | None = None
 
 
 @dataclasses.dataclass(kw_only=True)
 class Component:
-    """One role-bearing object a store holds, folded into a family's detail rather
-    than listed as a family of its own (abstraction.model/descriptor@1
-    MODEL-C3): store is the holder, role is projector, vae, or another value a
-    storage inventory source's descriptor names, and name is the store's own
-    name for the object when it named one."""
+    """One [role-bearing
+    object](https://openabstractions.github.io/reference.html#concept-model-identity.component)
+    a store holds, folded into a
+    [family](https://openabstractions.github.io/reference.html#concept-model.family-identity)'s
+    detail rather than listed as a family of its own
+    (abstraction.model/descriptor@1 MODEL-C3): store is the holder, role is
+    projector, vae, or another value a storage inventory source's descriptor
+    names, and name is the store's own name for the object when it named one."""
 
     store: str = ""
     role: str = ""
@@ -292,8 +310,59 @@ class Component:
 
 
 @dataclasses.dataclass(kw_only=True)
+class Engine:
+    """The provider's selected program loading weights (vocabulary D12), identified
+    within its host and registration generation. Version is omitted when
+    unreported. Source is display provenance, never an executable path or
+    authority claim."""
+
+    id: str = ""
+    name: str = ""
+    version: str = ""
+    source: str = ""
+
+
+@dataclasses.dataclass(kw_only=True)
+class ModelEngine:
+    """An explicit configured content-object-to-engine association from the
+    accepted provider registration or recipe. It asserts neither general format
+    acceptance nor readiness, and is separate from the client/service binding
+    and actual inference-route record."""
+
+    host: str = ""
+    model: str = ""
+    engine: str = ""
+    profiles: list[str] = dataclasses.field(default_factory=list)
+    source: str = ""
+    role: str = ""
+
+
+@dataclasses.dataclass(kw_only=True)
+class ModelObject:
+    """One storage content object projected with its source's model facts. Domain
+    is empty locally; object is an opaque source ID and digest requires
+    inventory evidence. A collection manifest is never one object. Missing
+    identity or descriptor facts remain unknown. Existing Component retains the
+    logical role/base-family relation. Why is plain display text, never parsed.
+    Clients never display digest as page text."""
+
+    domain: str = ""
+    store: str = ""
+    name: str = ""
+    object: str = ""
+    digest: str = ""
+    format: str = ""
+    architecture: str = ""
+    role: str = ""
+    engines: list[ModelEngine] = dataclasses.field(default_factory=list)
+    cause: EngineCause | str = ""
+    why: str = ""
+
+
+@dataclasses.dataclass(kw_only=True)
 class Family:
-    """names lists one alias per server and name; a name two servers serve appears
+    """[Family](https://openabstractions.github.io/reference.html#concept-router.family-catalogue):
+    names lists one alias per server and name; a name two servers serve appears
     twice, once per server. held_in names the storage inventory stores holding
     an object of this family, in store order, whether or not a host serves it;
     empty when no store reports one. A family whose names are all unservable is
@@ -306,13 +375,17 @@ class Family:
     derive a base for it, an object that is this family's only content —
     held_in and family_source cover the family it was folded into or the family
     it stands in for either way; components exists to say the family answers for
-    a part, not a whole model, when that is what it is."""
+    a part, not a whole model, when that is what it is. title is the model
+    catalogue's display name for the family, empty when none is known; it is
+    shown to people and never asked for."""
 
     family: str = ""
     names: list[Alias] = dataclasses.field(default_factory=list)
     held_in: list[str] = dataclasses.field(default_factory=list)
     family_source: str = ""
     components: list[Component] = dataclasses.field(default_factory=list)
+    title: str = ""
+    objects: list[ModelObject] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -353,6 +426,7 @@ class HostState:
     profiles: list[str] = dataclasses.field(default_factory=list)
     domain: str = ""
     availability_cause: AvailabilityCause | None = None
+    engines: list[Engine] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -421,7 +495,7 @@ class Offer:
     none, none for a profile without a context window. input is context minus
     the request's reserve, 0 when nothing remains or context is 0. unknown names
     the aliases whose server reported no usable request limit, as
-    <server>/<name>."""
+    <server>/<name>. title is the family's display name as in Family."""
 
     family: str = ""
     names: list[str] = dataclasses.field(default_factory=list)
@@ -430,6 +504,7 @@ class Offer:
     context_source: ContextSource | str = ""
     input: int = 0
     unknown: list[str] = dataclasses.field(default_factory=list)
+    title: str = ""
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -440,6 +515,41 @@ class OfferSnapshot:
     observation: Observation = dataclasses.field(default_factory=Observation)
     offers: list[Offer] = dataclasses.field(default_factory=list)
     outcome: OfferOutcome | None = None
+
+
+@dataclasses.dataclass(kw_only=True)
+class OfferObservation:
+    """One long-poll Offer reading. Exactly offered carries observation, offers and
+    cursor, a digest of the offers; it answers once that digest differs from the
+    cursor given, or when wait_ms ends. Every refusal carries an empty
+    observation, no offers and an empty cursor; it makes no model availability
+    claim."""
+
+    observation: Observation = dataclasses.field(default_factory=Observation)
+    offers: list[Offer] = dataclasses.field(default_factory=list)
+    outcome: OfferOutcome | None = None
+    cursor: str = ""
+
+
+@dataclasses.dataclass(kw_only=True)
+class ModalityPage:
+    """page carries at most 64 distinct modality IDs, each at most 256 UTF-8 bytes,
+    in UTF-8 byte order. next is an opaque cursor of at most 256 bytes, empty
+    exactly when complete. The catalogue contains the seed modalities and valid
+    current registered host declarations, independently of model availability.
+    Other outcomes carry no modalities, an empty next and complete false. gap
+    requires restarting with an empty cursor."""
+
+    outcome: ModalityOutcome | None = None
+    modalities: list[str] = dataclasses.field(default_factory=list)
+    next: str = ""
+    complete: bool = False
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RouterModalitiesArguments:
+    cursor: str = ""
+    limit: int = 0
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -460,6 +570,13 @@ class _RouterPickArguments:
 @dataclasses.dataclass(kw_only=True)
 class _RouterOfferArguments:
     request: OfferRequest = dataclasses.field(default_factory=OfferRequest)
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RouterObserveOfferArguments:
+    request: OfferRequest = dataclasses.field(default_factory=OfferRequest)
+    cursor: str = ""
+    wait_ms: int = 0
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -486,6 +603,11 @@ class _ServiceError:
 
 
 @dataclasses.dataclass(kw_only=True)
+class _RouterModalitiesResult:
+    value: ModalityPage = dataclasses.field(default_factory=ModalityPage)
+
+
+@dataclasses.dataclass(kw_only=True)
 class _RouterModelsResult:
     value: ModelsSnapshot = dataclasses.field(default_factory=ModelsSnapshot)
 
@@ -503,6 +625,11 @@ class _RouterPickResult:
 @dataclasses.dataclass(kw_only=True)
 class _RouterOfferResult:
     value: OfferSnapshot = dataclasses.field(default_factory=OfferSnapshot)
+
+
+@dataclasses.dataclass(kw_only=True)
+class _RouterObserveOfferResult:
+    value: OfferObservation = dataclasses.field(default_factory=OfferObservation)
 
 
 def _write_host_allowance(out, v, depth):
@@ -591,6 +718,123 @@ def _write_observation(out, v, depth):
     out += b"}"
 
 
+def _write_reasoning_support(out, v, depth):
+    if isinstance(v.efforts, list):
+        _size = len(v.efforts)
+        if _size > 8: raise Refusal("bad_value", 0)
+    for item in v.efforts:
+        if not isinstance(item, str):
+            raise Refusal("wrong_type", 0)
+    if v.default_effort is not None:
+        if not isinstance(v.default_effort, str):
+            raise Refusal("wrong_type", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "efforts")
+    out += b": "
+    _strs(out, v.efforts, depth + 1)
+    if v.budget:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "budget")
+        out += b": "
+        out += b"true" if v.budget else b"false"
+    if v.default_effort is not None:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "default_effort")
+        out += b": "
+        _esc(out, v.default_effort)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_model_capabilities(out, v, depth):
+    if v.tools is not None and type(v.tools) is not bool: raise Refusal("wrong_type", 0)
+    if v.structured_output is not None and type(v.structured_output) is not bool: raise Refusal("wrong_type", 0)
+    if isinstance(v.input, list):
+        _size = len(v.input)
+        if _size > 16: raise Refusal("bad_value", 0)
+    if isinstance(v.input, list):
+        for oa_element in v.input:
+            if isinstance(oa_element, str):
+                _size = len(oa_element.encode("utf-8", "surrogatepass"))
+                if _size < 1 or _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.output, list):
+        _size = len(v.output)
+        if _size > 16: raise Refusal("bad_value", 0)
+    if isinstance(v.output, list):
+        for oa_element in v.output:
+            if isinstance(oa_element, str):
+                _size = len(oa_element.encode("utf-8", "surrogatepass"))
+                if _size < 1 or _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.extensions, list):
+        _size = len(v.extensions)
+        if _size > 64: raise Refusal("bad_value", 0)
+    out += b"{"
+    first = True
+    if v.input:
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "input")
+        out += b": "
+        _strs(out, v.input, depth + 1)
+    if v.output:
+        if not first:
+            out += b","
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "output")
+        out += b": "
+        _strs(out, v.output, depth + 1)
+    if v.tools is not None:
+        if not first:
+            out += b","
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "tools")
+        out += b": "
+        out += b"true" if v.tools else b"false"
+    if v.structured_output is not None:
+        if not first:
+            out += b","
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "structured_output")
+        out += b": "
+        out += b"true" if v.structured_output else b"false"
+    if v.reasoning is not None:
+        if not first:
+            out += b","
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "reasoning")
+        out += b": "
+        _write_reasoning_support(out, v.reasoning, depth + 1)
+    if v.extensions:
+        if not first:
+            out += b","
+        first = False
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "extensions")
+        out += b": "
+        _strs(out, v.extensions, depth + 1)
+    if not first:
+        out += b"\n"
+        _pad(out, depth)
+    out += b"}"
+
+
 def _write_alias(out, v, depth):
     out += b"{"
     out += b"\n"
@@ -651,6 +895,13 @@ def _write_alias(out, v, depth):
         _esc(out, "effective_context_length")
         out += b": "
         _num(out, v.effective_context_length)
+    if v.capabilities is not None:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "capabilities")
+        out += b": "
+        _write_model_capabilities(out, v.capabilities, depth + 1)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -681,7 +932,231 @@ def _write_component(out, v, depth):
     out += b"}"
 
 
+def _write_engine(out, v, depth):
+    if isinstance(v.id, str):
+        _size = len(v.id.encode("utf-8", "surrogatepass"))
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.name, str):
+        _size = len(v.name.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.version, str):
+        _size = len(v.version.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.source, str):
+        _size = len(v.source.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "id")
+    out += b": "
+    _esc(out, v.id)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "name")
+    out += b": "
+    _esc(out, v.name)
+    if v.version:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "version")
+        out += b": "
+        _esc(out, v.version)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "source")
+    out += b": "
+    _esc(out, v.source)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_model_engine(out, v, depth):
+    if isinstance(v.host, str):
+        _size = len(v.host.encode("utf-8", "surrogatepass"))
+        if _size > 4096: raise Refusal("bad_value", 0)
+    if isinstance(v.model, str):
+        _size = len(v.model.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.engine, str):
+        _size = len(v.engine.encode("utf-8", "surrogatepass"))
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.profiles, list):
+        _size = len(v.profiles)
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.profiles, list):
+        for oa_element in v.profiles:
+            if isinstance(oa_element, str):
+                _size = len(oa_element.encode("utf-8", "surrogatepass"))
+                if _size < 1 or _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.source, str):
+        _size = len(v.source.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.role, str):
+        _size = len(v.role.encode("utf-8", "surrogatepass"))
+        if _size > 64: raise Refusal("bad_value", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "host")
+    out += b": "
+    _esc(out, v.host)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "model")
+    out += b": "
+    _esc(out, v.model)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "engine")
+    out += b": "
+    _esc(out, v.engine)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "profiles")
+    out += b": "
+    _strs(out, v.profiles, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "source")
+    out += b": "
+    _esc(out, v.source)
+    if v.role:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "role")
+        out += b": "
+        _esc(out, v.role)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_model_object(out, v, depth):
+    if isinstance(v.domain, str):
+        _size = len(v.domain.encode("utf-8", "surrogatepass"))
+        if _size > 4096: raise Refusal("bad_value", 0)
+    if isinstance(v.store, str):
+        _size = len(v.store.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.name, str):
+        _size = len(v.name.encode("utf-8", "surrogatepass"))
+        if _size > 4096: raise Refusal("bad_value", 0)
+    if isinstance(v.object, str):
+        _size = len(v.object.encode("utf-8", "surrogatepass"))
+        if _size > 1024: raise Refusal("bad_value", 0)
+    if isinstance(v.digest, str):
+        _size = len(v.digest.encode("utf-8", "surrogatepass"))
+        if _size > 135: raise Refusal("bad_value", 0)
+    if isinstance(v.format, str):
+        _size = len(v.format.encode("utf-8", "surrogatepass"))
+        if _size > 128: raise Refusal("bad_value", 0)
+    if isinstance(v.architecture, str):
+        _size = len(v.architecture.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.role, str):
+        _size = len(v.role.encode("utf-8", "surrogatepass"))
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.engines, list):
+        _size = len(v.engines)
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.why, str):
+        _size = len(v.why.encode("utf-8", "surrogatepass"))
+        if _size > 4096: raise Refusal("bad_value", 0)
+    if not isinstance(v.cause, str):
+        raise Refusal("wrong_type", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "domain")
+    out += b": "
+    _esc(out, v.domain)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "store")
+    out += b": "
+    _esc(out, v.store)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "name")
+    out += b": "
+    _esc(out, v.name)
+    if v.object:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "object")
+        out += b": "
+        _esc(out, v.object)
+    if v.digest:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "digest")
+        out += b": "
+        _esc(out, v.digest)
+    if v.format:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "format")
+        out += b": "
+        _esc(out, v.format)
+    if v.architecture:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "architecture")
+        out += b": "
+        _esc(out, v.architecture)
+    if v.role:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "role")
+        out += b": "
+        _esc(out, v.role)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "engines")
+    out += b": "
+    _write_list(out, v.engines, depth + 1, _write_model_engine)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "cause")
+    out += b": "
+    _esc(out, v.cause)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "why")
+    out += b": "
+    _esc(out, v.why)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
 def _write_family(out, v, depth):
+    if isinstance(v.title, str):
+        _size = len(v.title.encode("utf-8", "surrogatepass"))
+        if _size > 128: raise Refusal("bad_value", 0)
+    if isinstance(v.objects, list):
+        _size = len(v.objects)
+        if _size > 65536: raise Refusal("bad_value", 0)
     out += b"{"
     out += b"\n"
     _pad(out, depth + 1)
@@ -715,6 +1190,20 @@ def _write_family(out, v, depth):
         _esc(out, "components")
         out += b": "
         _write_list(out, v.components, depth + 1, _write_component)
+    if v.title:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "title")
+        out += b": "
+        _esc(out, v.title)
+    if v.objects:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "objects")
+        out += b": "
+        _write_list(out, v.objects, depth + 1, _write_model_object)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -739,6 +1228,9 @@ def _write_models_snapshot(out, v, depth):
 
 
 def _write_host_state(out, v, depth):
+    if isinstance(v.engines, list):
+        _size = len(v.engines)
+        if _size > 64: raise Refusal("bad_value", 0)
     if v.availability_cause is not None:
         if not isinstance(v.availability_cause, str):
             raise Refusal("wrong_type", 0)
@@ -833,6 +1325,13 @@ def _write_host_state(out, v, depth):
         _esc(out, "availability_cause")
         out += b": "
         _esc(out, v.availability_cause)
+    if v.engines:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "engines")
+        out += b": "
+        _write_list(out, v.engines, depth + 1, _write_engine)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1039,6 +1538,9 @@ def _write_offer_request(out, v, depth):
 
 
 def _write_offer(out, v, depth):
+    if isinstance(v.title, str):
+        _size = len(v.title.encode("utf-8", "surrogatepass"))
+        if _size > 128: raise Refusal("bad_value", 0)
     if not isinstance(v.context_source, str):
         raise Refusal("wrong_type", 0)
     out += b"{"
@@ -1084,6 +1586,13 @@ def _write_offer(out, v, depth):
         _esc(out, "unknown")
         out += b": "
         _strs(out, v.unknown, depth + 1)
+    if v.title:
+        out += b","
+        out += b"\n"
+        _pad(out, depth + 1)
+        _esc(out, "title")
+        out += b": "
+        _esc(out, v.title)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1109,6 +1618,106 @@ def _write_offer_snapshot(out, v, depth):
     _esc(out, "outcome")
     out += b": "
     _esc(out, v.outcome)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_offer_observation(out, v, depth):
+    if isinstance(v.offers, list):
+        _size = len(v.offers)
+        if _size > 4096: raise Refusal("bad_value", 0)
+    if isinstance(v.cursor, str):
+        _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    _closed_enum(OfferOutcome, v.outcome)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "observation")
+    out += b": "
+    _write_observation(out, v.observation, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "offers")
+    out += b": "
+    _write_list(out, v.offers, depth + 1, _write_offer)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "outcome")
+    out += b": "
+    _esc(out, v.outcome)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "cursor")
+    out += b": "
+    _esc(out, v.cursor)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_modality_page(out, v, depth):
+    if isinstance(v.modalities, list):
+        _size = len(v.modalities)
+        if _size > 64: raise Refusal("bad_value", 0)
+    if isinstance(v.modalities, list):
+        for oa_element in v.modalities:
+            if isinstance(oa_element, str):
+                _size = len(oa_element.encode("utf-8", "surrogatepass"))
+                if _size < 1 or _size > 256: raise Refusal("bad_value", 0)
+    if isinstance(v.next, str):
+        _size = len(v.next.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    _closed_enum(ModalityOutcome, v.outcome)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "outcome")
+    out += b": "
+    _esc(out, v.outcome)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "modalities")
+    out += b": "
+    _strs(out, v.modalities, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "next")
+    out += b": "
+    _esc(out, v.next)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "complete")
+    out += b": "
+    out += b"true" if v.complete else b"false"
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_oa_router_modalities_arguments(out, v, depth):
+    if isinstance(v.cursor, str):
+        _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "cursor")
+    out += b": "
+    _esc(out, v.cursor)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "limit")
+    out += b": "
+    _num(out, v.limit)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1157,6 +1766,33 @@ def _write_oa_router_offer_arguments(out, v, depth):
     _esc(out, "request")
     out += b": "
     _write_offer_request(out, v.request, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_oa_router_observe_offer_arguments(out, v, depth):
+    if isinstance(v.cursor, str):
+        _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+        if _size > 256: raise Refusal("bad_value", 0)
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "request")
+    out += b": "
+    _write_offer_request(out, v.request, depth + 1)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "cursor")
+    out += b": "
+    _esc(out, v.cursor)
+    out += b","
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "wait_ms")
+    out += b": "
+    _num(out, v.wait_ms)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1246,6 +1882,18 @@ def _write_oa_service_error(out, v, depth):
     out += b"}"
 
 
+def _write_oa_router_modalities_result(out, v, depth):
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "value")
+    out += b": "
+    _write_modality_page(out, v.value, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
 def _write_oa_router_models_result(out, v, depth):
     out += b"{"
     out += b"\n"
@@ -1289,6 +1937,18 @@ def _write_oa_router_offer_result(out, v, depth):
     _esc(out, "value")
     out += b": "
     _write_offer_snapshot(out, v.value, depth + 1)
+    out += b"\n"
+    _pad(out, depth)
+    out += b"}"
+
+
+def _write_oa_router_observe_offer_result(out, v, depth):
+    out += b"{"
+    out += b"\n"
+    _pad(out, depth + 1)
+    _esc(out, "value")
+    out += b": "
+    _write_offer_observation(out, v.value, depth + 1)
     out += b"\n"
     _pad(out, depth)
     out += b"}"
@@ -1835,6 +2495,7 @@ def _read_caller(r):
     v = Caller()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -1857,6 +2518,9 @@ def _read_caller(r):
                 seen |= 2
                 v.path_description = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -1879,6 +2543,7 @@ def _read_observation(r):
     v = Observation()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -1906,6 +2571,9 @@ def _read_observation(r):
                 seen |= 4
                 v.cache_age_ms = r.integer(-9223372036854775808, 9223372036854775807)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -1920,6 +2588,144 @@ def _read_observation(r):
     return v
 
 
+def _read_reasoning_support(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = ReasoningSupport()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "efforts":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.efforts = r.str_list()
+            elif key == "budget":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.budget = r.boolean()
+            elif key == "default_effort":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.default_effort = r.string()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1 != 1:
+        raise r.refuse("missing_field")
+    _size = len(v.efforts)
+    if _size > 8: raise r.refuse("bad_value")
+    v.efforts = [_open_enum(ReasoningEffort, item) for item in v.efforts]
+    if v.default_effort is not None:
+        v.default_effort = _open_enum(ReasoningEffort, v.default_effort)
+    return v
+
+
+def _read_model_capabilities(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = ModelCapabilities()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "input":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.input = r.str_list()
+            elif key == "output":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.output = r.str_list()
+            elif key == "tools":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.tools = r.boolean()
+            elif key == "structured_output":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.structured_output = r.boolean()
+            elif key == "reasoning":
+                if seen & 16:
+                    raise r.refuse("duplicate_field")
+                seen |= 16
+                v.reasoning = _read_reasoning_support(r)
+            elif key == "extensions":
+                if seen & 32:
+                    raise r.refuse("duplicate_field")
+                seen |= 32
+                v.extensions = r.str_list()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    _size = len(v.input)
+    if _size > 16: raise r.refuse("bad_value")
+    if isinstance(v.input, list):
+        for oa_element in v.input:
+            _size = len(oa_element.encode("utf-8", "surrogatepass"))
+            if _size < 1 or _size > 256: raise r.refuse("bad_value")
+    _size = len(v.output)
+    if _size > 16: raise r.refuse("bad_value")
+    if isinstance(v.output, list):
+        for oa_element in v.output:
+            _size = len(oa_element.encode("utf-8", "surrogatepass"))
+            if _size < 1 or _size > 256: raise r.refuse("bad_value")
+    _size = len(v.extensions)
+    if _size > 64: raise r.refuse("bad_value")
+    return v
+
+
 def _read_alias(r):
     if r.at() != _LBRACE:
         raise r.refuse("wrong_type")
@@ -1928,6 +2734,7 @@ def _read_alias(r):
     v = Alias()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -1984,7 +2791,15 @@ def _read_alias(r):
                     raise r.refuse("duplicate_field")
                 seen |= 256
                 v.effective_context_length = r.integer(-9223372036854775808, 9223372036854775807)
+            elif key == "capabilities":
+                if seen & 512:
+                    raise r.refuse("duplicate_field")
+                seen |= 512
+                v.capabilities = _read_model_capabilities(r)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2007,6 +2822,7 @@ def _read_component(r):
     v = Component()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2034,6 +2850,9 @@ def _read_component(r):
                 seen |= 4
                 v.name = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2048,6 +2867,270 @@ def _read_component(r):
     return v
 
 
+def _read_engine(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = Engine()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "id":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.id = r.string()
+            elif key == "name":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.name = r.string()
+            elif key == "version":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.version = r.string()
+            elif key == "source":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.source = r.string()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 11 != 11:
+        raise r.refuse("missing_field")
+    _size = len(v.id.encode("utf-8", "surrogatepass"))
+    if _size > 64: raise r.refuse("bad_value")
+    _size = len(v.name.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.version.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.source.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    return v
+
+
+def _read_model_engine(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = ModelEngine()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "host":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.host = r.string()
+            elif key == "model":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.model = r.string()
+            elif key == "engine":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.engine = r.string()
+            elif key == "profiles":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.profiles = r.str_list()
+            elif key == "source":
+                if seen & 16:
+                    raise r.refuse("duplicate_field")
+                seen |= 16
+                v.source = r.string()
+            elif key == "role":
+                if seen & 32:
+                    raise r.refuse("duplicate_field")
+                seen |= 32
+                v.role = r.string()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 31 != 31:
+        raise r.refuse("missing_field")
+    _size = len(v.host.encode("utf-8", "surrogatepass"))
+    if _size > 4096: raise r.refuse("bad_value")
+    _size = len(v.model.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.engine.encode("utf-8", "surrogatepass"))
+    if _size > 64: raise r.refuse("bad_value")
+    _size = len(v.profiles)
+    if _size > 64: raise r.refuse("bad_value")
+    if isinstance(v.profiles, list):
+        for oa_element in v.profiles:
+            _size = len(oa_element.encode("utf-8", "surrogatepass"))
+            if _size < 1 or _size > 256: raise r.refuse("bad_value")
+    _size = len(v.source.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.role.encode("utf-8", "surrogatepass"))
+    if _size > 64: raise r.refuse("bad_value")
+    return v
+
+
+def _read_model_object(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = ModelObject()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "domain":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.domain = r.string()
+            elif key == "store":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.store = r.string()
+            elif key == "name":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.name = r.string()
+            elif key == "object":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.object = r.string()
+            elif key == "digest":
+                if seen & 16:
+                    raise r.refuse("duplicate_field")
+                seen |= 16
+                v.digest = r.string()
+            elif key == "format":
+                if seen & 32:
+                    raise r.refuse("duplicate_field")
+                seen |= 32
+                v.format = r.string()
+            elif key == "architecture":
+                if seen & 64:
+                    raise r.refuse("duplicate_field")
+                seen |= 64
+                v.architecture = r.string()
+            elif key == "role":
+                if seen & 128:
+                    raise r.refuse("duplicate_field")
+                seen |= 128
+                v.role = r.string()
+            elif key == "engines":
+                if seen & 256:
+                    raise r.refuse("duplicate_field")
+                seen |= 256
+                v.engines = _read_list(r, _read_model_engine)
+            elif key == "cause":
+                if seen & 512:
+                    raise r.refuse("duplicate_field")
+                seen |= 512
+                v.cause = r.string()
+            elif key == "why":
+                if seen & 1024:
+                    raise r.refuse("duplicate_field")
+                seen |= 1024
+                v.why = r.string()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1799 != 1799:
+        raise r.refuse("missing_field")
+    _size = len(v.domain.encode("utf-8", "surrogatepass"))
+    if _size > 4096: raise r.refuse("bad_value")
+    _size = len(v.store.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.name.encode("utf-8", "surrogatepass"))
+    if _size > 4096: raise r.refuse("bad_value")
+    _size = len(v.object.encode("utf-8", "surrogatepass"))
+    if _size > 1024: raise r.refuse("bad_value")
+    _size = len(v.digest.encode("utf-8", "surrogatepass"))
+    if _size > 135: raise r.refuse("bad_value")
+    _size = len(v.format.encode("utf-8", "surrogatepass"))
+    if _size > 128: raise r.refuse("bad_value")
+    _size = len(v.architecture.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    _size = len(v.role.encode("utf-8", "surrogatepass"))
+    if _size > 64: raise r.refuse("bad_value")
+    _size = len(v.engines)
+    if _size > 64: raise r.refuse("bad_value")
+    _size = len(v.why.encode("utf-8", "surrogatepass"))
+    if _size > 4096: raise r.refuse("bad_value")
+    v.cause = _open_enum(EngineCause, v.cause)
+    return v
+
+
 def _read_family(r):
     if r.at() != _LBRACE:
         raise r.refuse("wrong_type")
@@ -2056,6 +3139,7 @@ def _read_family(r):
     v = Family()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2092,7 +3176,20 @@ def _read_family(r):
                     raise r.refuse("duplicate_field")
                 seen |= 16
                 v.components = _read_list(r, _read_component)
+            elif key == "title":
+                if seen & 32:
+                    raise r.refuse("duplicate_field")
+                seen |= 32
+                v.title = r.string()
+            elif key == "objects":
+                if seen & 64:
+                    raise r.refuse("duplicate_field")
+                seen |= 64
+                v.objects = _read_list(r, _read_model_object)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2104,6 +3201,10 @@ def _read_family(r):
     r.depth -= 1
     if seen & 3 != 3:
         raise r.refuse("missing_field")
+    _size = len(v.title.encode("utf-8", "surrogatepass"))
+    if _size > 128: raise r.refuse("bad_value")
+    _size = len(v.objects)
+    if _size > 65536: raise r.refuse("bad_value")
     return v
 
 
@@ -2115,6 +3216,7 @@ def _read_models_snapshot(r):
     v = ModelsSnapshot()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2137,6 +3239,9 @@ def _read_models_snapshot(r):
                 seen |= 2
                 v.models = _read_list(r, _read_family)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2159,6 +3264,7 @@ def _read_host_state(r):
     v = HostState()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2240,7 +3346,15 @@ def _read_host_state(r):
                     raise r.refuse("duplicate_field")
                 seen |= 8192
                 v.availability_cause = r.string()
+            elif key == "engines":
+                if seen & 16384:
+                    raise r.refuse("duplicate_field")
+                seen |= 16384
+                v.engines = _read_list(r, _read_engine)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2252,6 +3366,8 @@ def _read_host_state(r):
     r.depth -= 1
     if seen & 127 != 127:
         raise r.refuse("missing_field")
+    _size = len(v.engines)
+    if _size > 64: raise r.refuse("bad_value")
     if v.availability_cause is not None:
         v.availability_cause = _open_enum(AvailabilityCause, v.availability_cause)
     return v
@@ -2265,6 +3381,7 @@ def _read_ask(r):
     v = Ask()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2312,6 +3429,9 @@ def _read_ask(r):
                 seen |= 64
                 v.host = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2334,6 +3454,7 @@ def _read_hosts_snapshot(r):
     v = HostsSnapshot()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2366,6 +3487,9 @@ def _read_hosts_snapshot(r):
                 seen |= 8
                 v.asked = _read_list(r, _read_ask)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2388,6 +3512,7 @@ def _read_decision(r):
     v = Decision()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2455,6 +3580,9 @@ def _read_decision(r):
                 seen |= 1024
                 v.why = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2477,6 +3605,7 @@ def _read_pick_result(r):
     v = PickResult()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2499,6 +3628,9 @@ def _read_pick_result(r):
                 seen |= 2
                 v.decision = _read_decision(r)
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2579,6 +3711,7 @@ def _read_offer(r):
     v = Offer()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2625,7 +3758,15 @@ def _read_offer(r):
                     raise r.refuse("duplicate_field")
                 seen |= 64
                 v.unknown = r.str_list()
+            elif key == "title":
+                if seen & 128:
+                    raise r.refuse("duplicate_field")
+                seen |= 128
+                v.title = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2637,6 +3778,8 @@ def _read_offer(r):
     r.depth -= 1
     if seen & 63 != 63:
         raise r.refuse("missing_field")
+    _size = len(v.title.encode("utf-8", "surrogatepass"))
+    if _size > 128: raise r.refuse("bad_value")
     v.context_source = _open_enum(ContextSource, v.context_source)
     return v
 
@@ -2649,6 +3792,7 @@ def _read_offer_snapshot(r):
     v = OfferSnapshot()
     seen = 0
     r.ws()
+    unknown_keys = set()
     if r.at() != _RBRACE:
         while True:
             r.ws()
@@ -2676,6 +3820,9 @@ def _read_offer_snapshot(r):
                 seen |= 4
                 v.outcome = r.string()
             else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
                 r.skip_value()
             r.ws()
             if r.at() != _COMMA:
@@ -2691,6 +3838,188 @@ def _read_offer_snapshot(r):
         v.outcome = OfferOutcome(v.outcome)
     except ValueError:
         raise r.refuse("bad_enum") from None
+    return v
+
+
+def _read_offer_observation(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = OfferObservation()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "observation":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.observation = _read_observation(r)
+            elif key == "offers":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.offers = _read_list(r, _read_offer)
+            elif key == "outcome":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.outcome = r.string()
+            elif key == "cursor":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.cursor = r.string()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 15 != 15:
+        raise r.refuse("missing_field")
+    _size = len(v.offers)
+    if _size > 4096: raise r.refuse("bad_value")
+    _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    try:
+        v.outcome = OfferOutcome(v.outcome)
+    except ValueError:
+        raise r.refuse("bad_enum") from None
+    return v
+
+
+def _read_modality_page(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = ModalityPage()
+    seen = 0
+    r.ws()
+    unknown_keys = set()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "outcome":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.outcome = r.string()
+            elif key == "modalities":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.modalities = r.str_list()
+            elif key == "next":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.next = r.string()
+            elif key == "complete":
+                if seen & 8:
+                    raise r.refuse("duplicate_field")
+                seen |= 8
+                v.complete = r.boolean()
+            else:
+                if key in unknown_keys:
+                    raise r.refuse("duplicate_key")
+                unknown_keys.add(key)
+                r.skip_value()
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 15 != 15:
+        raise r.refuse("missing_field")
+    _size = len(v.modalities)
+    if _size > 64: raise r.refuse("bad_value")
+    if isinstance(v.modalities, list):
+        for oa_element in v.modalities:
+            _size = len(oa_element.encode("utf-8", "surrogatepass"))
+            if _size < 1 or _size > 256: raise r.refuse("bad_value")
+    _size = len(v.next.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
+    try:
+        v.outcome = ModalityOutcome(v.outcome)
+    except ValueError:
+        raise r.refuse("bad_enum") from None
+    return v
+
+
+def _read_oa_router_modalities_arguments(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterModalitiesArguments()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "cursor":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.cursor = r.string()
+            elif key == "limit":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.limit = r.integer(-9223372036854775808, 9223372036854775807)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 3 != 3:
+        raise r.refuse("missing_field")
+    _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
     return v
 
 
@@ -2847,6 +4176,57 @@ def _read_oa_router_offer_arguments(r):
     r.depth -= 1
     if seen & 1 != 1:
         raise r.refuse("missing_field")
+    return v
+
+
+def _read_oa_router_observe_offer_arguments(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterObserveOfferArguments()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "request":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.request = _read_offer_request(r)
+            elif key == "cursor":
+                if seen & 2:
+                    raise r.refuse("duplicate_field")
+                seen |= 2
+                v.cursor = r.string()
+            elif key == "wait_ms":
+                if seen & 4:
+                    raise r.refuse("duplicate_field")
+                seen |= 4
+                v.wait_ms = r.integer(-9223372036854775808, 9223372036854775807)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 7 != 7:
+        raise r.refuse("missing_field")
+    _size = len(v.cursor.encode("utf-8", "surrogatepass"))
+    if _size > 256: raise r.refuse("bad_value")
     return v
 
 
@@ -3007,6 +4387,45 @@ def _read_oa_service_error(r):
     return v
 
 
+def _read_oa_router_modalities_result(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterModalitiesResult()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "value":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.value = _read_modality_page(r)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1 != 1:
+        raise r.refuse("missing_field")
+    return v
+
+
 def _read_oa_router_models_result(r):
     if r.at() != _LBRACE:
         raise r.refuse("wrong_type")
@@ -3163,6 +4582,45 @@ def _read_oa_router_offer_result(r):
     return v
 
 
+def _read_oa_router_observe_offer_result(r):
+    if r.at() != _LBRACE:
+        raise r.refuse("wrong_type")
+    r.enter()
+    r.pos += 1
+    v = _RouterObserveOfferResult()
+    seen = 0
+    r.ws()
+    if r.at() != _RBRACE:
+        while True:
+            r.ws()
+            if r.at() != _QUOTE:
+                raise r.refuse("malformed")
+            key = r.string()
+            r.ws()
+            if r.at() != _COLON:
+                raise r.refuse("malformed")
+            r.pos += 1
+            r.ws()
+            if key == "value":
+                if seen & 1:
+                    raise r.refuse("duplicate_field")
+                seen |= 1
+                v.value = _read_offer_observation(r)
+            else:
+                raise r.refuse("unknown_field")
+            r.ws()
+            if r.at() != _COMMA:
+                break
+            r.pos += 1
+    if r.at() != _RBRACE:
+        raise r.refuse("malformed")
+    r.pos += 1
+    r.depth -= 1
+    if seen & 1 != 1:
+        raise r.refuse("missing_field")
+    return v
+
+
 def decode(data):
     r = _Reader(bytes(data))
     r.ws()
@@ -3173,9 +4631,61 @@ def decode(data):
     return v
 
 
+_JSON_RECORDS = {
+    HostAllowance: (_write_host_allowance, _read_host_allowance),
+    PickRequest: (_write_pick_request, _read_pick_request),
+    Caller: (_write_caller, _read_caller),
+    Observation: (_write_observation, _read_observation),
+    ReasoningSupport: (_write_reasoning_support, _read_reasoning_support),
+    ModelCapabilities: (_write_model_capabilities, _read_model_capabilities),
+    Alias: (_write_alias, _read_alias),
+    Component: (_write_component, _read_component),
+    Engine: (_write_engine, _read_engine),
+    ModelEngine: (_write_model_engine, _read_model_engine),
+    ModelObject: (_write_model_object, _read_model_object),
+    Family: (_write_family, _read_family),
+    ModelsSnapshot: (_write_models_snapshot, _read_models_snapshot),
+    HostState: (_write_host_state, _read_host_state),
+    Ask: (_write_ask, _read_ask),
+    HostsSnapshot: (_write_hosts_snapshot, _read_hosts_snapshot),
+    Decision: (_write_decision, _read_decision),
+    PickResult: (_write_pick_result, _read_pick_result),
+    OfferRequest: (_write_offer_request, _read_offer_request),
+    Offer: (_write_offer, _read_offer),
+    OfferSnapshot: (_write_offer_snapshot, _read_offer_snapshot),
+    OfferObservation: (_write_offer_observation, _read_offer_observation),
+    ModalityPage: (_write_modality_page, _read_modality_page),
+}
+
+
+def to_json(value):
+    """One record as JSON bytes, laid out as this module's documents are and
+    without the document terminator."""
+    codec = _JSON_RECORDS.get(type(value))
+    if codec is None:
+        raise TypeError("to_json takes a record of this module, not %s" % type(value).__name__)
+    out = bytearray()
+    codec[0](out, value, 0)
+    return bytes(out)
+
+
+def from_json(kind, data):
+    """Read one record of class kind from data; a refused input raises Refusal."""
+    codec = _JSON_RECORDS.get(kind)
+    if codec is None:
+        raise TypeError("from_json takes a record class of this module, not %r" % (kind,))
+    r = _Reader(bytes(data))
+    r.ws()
+    v = codec[1](r)
+    r.ws()
+    if r.pos < len(r.buf):
+        raise r.refuse("trailing_bytes")
+    return v
+
+
 # _REFUSALS is in the order two of them are chosen between.
 
-_REFUSALS = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "trailing_bytes"]
+_REFUSALS = ["malformed", "bad_string", "number_spelling", "wrong_type", "bad_timestamp", "depth_exceeded", "duplicate_key", "duplicate_field", "unknown_field", "missing_field", "bad_enum", "bad_value", "trailing_bytes"]
 
 
 def _refusal_rank(word):
@@ -3290,35 +4800,56 @@ _SERVICE_RECORDS = {
     "PickRequest": (PickRequest, [("model", "string", "never"), ("fresh", "bool", "never"), ("allowed", "HostAllowance", "absent"), ("profile", "string", "zero"), ]),
     "Caller": (Caller, [("user_description", "string", "never"), ("path_description", "string", "never"), ]),
     "Observation": (Observation, [("caller", "Caller", "never"), ("took_ms", "i64", "never"), ("cache_age_ms", "i64", "never"), ]),
-    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ("held_in", "list<string>", "zero"), ("context_length", "i64", "zero"), ("effective_context_length", "i64", "zero"), ]),
+    "ReasoningSupport": (ReasoningSupport, [("efforts", "list<enum>", "never"), ("budget", "bool", "zero"), ("default_effort", "enum", "absent"), ]),
+    "ModelCapabilities": (ModelCapabilities, [("input", "list<string>", "zero"), ("output", "list<string>", "zero"), ("tools", "bool", "absent"), ("structured_output", "bool", "absent"), ("reasoning", "ReasoningSupport", "absent"), ("extensions", "list<string>", "zero"), ]),
+    "Alias": (Alias, [("host", "string", "never"), ("name", "string", "never"), ("resident", "bool", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("profiles", "list<string>", "zero"), ("held_in", "list<string>", "zero"), ("context_length", "i64", "zero"), ("effective_context_length", "i64", "zero"), ("capabilities", "ModelCapabilities", "absent"), ]),
     "Component": (Component, [("store", "string", "never"), ("role", "string", "never"), ("name", "string", "zero"), ]),
-    "Family": (Family, [("family", "string", "never"), ("names", "list<Alias>", "never"), ("held_in", "list<string>", "zero"), ("family_source", "string", "zero"), ("components", "list<Component>", "zero"), ]),
+    "Engine": (Engine, [("id", "string", "never"), ("name", "string", "never"), ("version", "string", "zero"), ("source", "string", "never"), ]),
+    "ModelEngine": (ModelEngine, [("host", "string", "never"), ("model", "string", "never"), ("engine", "string", "never"), ("profiles", "list<string>", "never"), ("source", "string", "never"), ("role", "string", "zero"), ]),
+    "ModelObject": (ModelObject, [("domain", "string", "never"), ("store", "string", "never"), ("name", "string", "never"), ("object", "string", "zero"), ("digest", "string", "zero"), ("format", "string", "zero"), ("architecture", "string", "zero"), ("role", "string", "zero"), ("engines", "list<ModelEngine>", "never"), ("cause", "enum", "never"), ("why", "string", "never"), ]),
+    "Family": (Family, [("family", "string", "never"), ("names", "list<Alias>", "never"), ("held_in", "list<string>", "zero"), ("family_source", "string", "zero"), ("components", "list<Component>", "zero"), ("title", "string", "zero"), ("objects", "list<ModelObject>", "zero"), ]),
     "ModelsSnapshot": (ModelsSnapshot, [("observation", "Observation", "never"), ("models", "list<Family>", "never"), ]),
-    "HostState": (HostState, [("host", "string", "never"), ("base", "string", "never"), ("up", "bool", "never"), ("why", "string", "never"), ("installed", "i64", "never"), ("resident", "list<string>", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("wire", "string", "zero"), ("credential", "string", "zero"), ("declared_by", "string", "zero"), ("profiles", "list<string>", "zero"), ("domain", "string", "zero"), ("availability_cause", "enum", "absent"), ]),
+    "HostState": (HostState, [("host", "string", "never"), ("base", "string", "never"), ("up", "bool", "never"), ("why", "string", "never"), ("installed", "i64", "never"), ("resident", "list<string>", "never"), ("servable", "bool", "never"), ("hosted", "bool", "zero"), ("wire", "string", "zero"), ("credential", "string", "zero"), ("declared_by", "string", "zero"), ("profiles", "list<string>", "zero"), ("domain", "string", "zero"), ("availability_cause", "enum", "absent"), ("engines", "list<Engine>", "zero"), ]),
     "Ask": (Ask, [("at", "string", "never"), ("caller", "string", "never"), ("user", "string", "never"), ("model", "string", "never"), ("family", "string", "never"), ("verdict", "string", "never"), ("host", "string", "never"), ]),
     "HostsSnapshot": (HostsSnapshot, [("observation", "Observation", "never"), ("hosts", "list<HostState>", "never"), ("doubled", "list<string>", "never"), ("asked", "list<Ask>", "never"), ]),
     "Decision": (Decision, [("asked", "string", "never"), ("family", "string", "never"), ("verdict", "string", "never"), ("host", "string", "never"), ("model", "string", "never"), ("endpoint", "string", "never"), ("installed_on", "list<string>", "never"), ("authorised", "HostAllowance", "absent"), ("withheld", "list<string>", "never"), ("loads", "i64", "never"), ("why", "string", "never"), ]),
     "PickResult": (PickResult, [("observation", "Observation", "never"), ("decision", "Decision", "never"), ]),
     "OfferRequest": (OfferRequest, [("profile", "string", "never"), ("placement", "enum", "never"), ("reserve", "i64", "never"), ("fresh", "bool", "never"), ]),
-    "Offer": (Offer, [("family", "string", "never"), ("names", "list<string>", "never"), ("servers", "list<string>", "never"), ("context", "i64", "never"), ("context_source", "enum", "never"), ("input", "i64", "never"), ("unknown", "list<string>", "zero"), ]),
+    "Offer": (Offer, [("family", "string", "never"), ("names", "list<string>", "never"), ("servers", "list<string>", "never"), ("context", "i64", "never"), ("context_source", "enum", "never"), ("input", "i64", "never"), ("unknown", "list<string>", "zero"), ("title", "string", "zero"), ]),
     "OfferSnapshot": (OfferSnapshot, [("observation", "Observation", "never"), ("offers", "list<Offer>", "never"), ("outcome", "enum", "never"), ]),
+    "OfferObservation": (OfferObservation, [("observation", "Observation", "never"), ("offers", "list<Offer>", "never"), ("outcome", "enum", "never"), ("cursor", "string", "never"), ]),
+    "ModalityPage": (ModalityPage, [("outcome", "enum", "never"), ("modalities", "list<string>", "never"), ("next", "string", "never"), ("complete", "bool", "never"), ]),
+    "OARouterModalitiesArguments": (_RouterModalitiesArguments, [("cursor", "string", "never"), ("limit", "i64", "never"), ]),
     "OARouterModelsArguments": (_RouterModelsArguments, [("fresh", "bool", "never"), ]),
     "OARouterHostsArguments": (_RouterHostsArguments, [("fresh", "bool", "never"), ]),
     "OARouterPickArguments": (_RouterPickArguments, [("request", "PickRequest", "never"), ]),
     "OARouterOfferArguments": (_RouterOfferArguments, [("request", "OfferRequest", "never"), ]),
+    "OARouterObserveOfferArguments": (_RouterObserveOfferArguments, [("request", "OfferRequest", "never"), ("cursor", "string", "never"), ("wait_ms", "i64", "never"), ]),
     "OAServiceFrame": (_ServiceFrame, [("version", "i32", "never"), ("service", "string", "never"), ("method", "string", "never"), ("arguments", "json", "never"), ]),
     "OAServiceReply": (_ServiceReply, [("version", "i32", "never"), ("service", "string", "never"), ("method", "string", "never"), ("ok", "bool", "never"), ("payload", "json", "never"), ]),
     "OAServiceError": (_ServiceError, [("code", "string", "never"), ("message", "string", "never"), ]),
+    "OARouterModalitiesResult": (_RouterModalitiesResult, [("value", "ModalityPage", "never"), ]),
     "OARouterModelsResult": (_RouterModelsResult, [("value", "ModelsSnapshot", "never"), ]),
     "OARouterHostsResult": (_RouterHostsResult, [("value", "HostsSnapshot", "never"), ]),
     "OARouterPickResult": (_RouterPickResult, [("value", "PickResult", "never"), ]),
     "OARouterOfferResult": (_RouterOfferResult, [("value", "OfferSnapshot", "never"), ]),
+    "OARouterObserveOfferResult": (_RouterObserveOfferResult, [("value", "OfferObservation", "never"), ]),
 }
 
 
 class Router:
     """Read existing model hosts and choose where a caller may ask. Decisions do
     not enforce access to hosts outside the router."""
+
+    def modalities(self, cursor: str, limit: int) -> ModalityPage:
+        """Read the modality catalogue under inventory.read without surveying
+        hosts. limit is 1..64; cursor is at most 256 UTF-8 bytes. Empty cursor
+        starts a listing. Continuations bind caller, runtime instance and
+        catalogue; changed or foreign cursors give gap. Every page uses one
+        current catalogue snapshot. Invalid bounds give invalid; policy refusal
+        gives not_permitted and decision outage gives unavailable, with no
+        partial disclosure."""
+        raise NotImplementedError
 
     def models(self, fresh: bool) -> ModelsSnapshot:
         """Read model families and aliases. Fresh requests survey the existing
@@ -3342,12 +4873,34 @@ class Router:
         Gated by abstraction.router/inventory.read."""
         raise NotImplementedError
 
+    def observe_offer(self, request: OfferRequest, cursor: str, wait_ms: int) -> OfferObservation:
+        """Wait up to wait_ms milliseconds for the request's Offer answer to differ
+        from cursor, then answer it with its cursor. An empty cursor answers at
+        once; fresh surveys the servers before the first reading only. The
+        router's own survey clock and declaration changes renew what a wait
+        reads. wait_ms outside 0..30000 gives invalid. Gated as Offer is
+        (ROUTE-A2); rules in ROUTE-D11."""
+        raise NotImplementedError
+
 
 class RouterClient(Router):
     """Calls abstraction.router/router@1 through a transport that exchanges frames."""
 
     def __init__(self, transport):
         self._transport = transport
+
+    def modalities(self, cursor: str, limit: int) -> ModalityPage:
+        _service_check("string", cursor)
+        _service_check("i64", limit)
+        _args = _RouterModalitiesArguments()
+        _args.cursor = cursor
+        _args.limit = limit
+        _arguments = _service_encode(_write_oa_router_modalities_arguments, _args, 1)
+        _service_decode(_read_oa_router_modalities_arguments, _arguments, 1)
+        _request = _service_request("abstraction.router/router@1", "Modalities", _arguments)
+        _payload = _service_response(self._transport.exchange_frame(_request), "abstraction.router/router@1", "Modalities")
+        _result = _service_decode(_read_oa_router_modalities_result, _payload, 1)
+        return _result.value
 
     def models(self, fresh: bool) -> ModelsSnapshot:
         _service_check("bool", fresh)
@@ -3391,4 +4944,19 @@ class RouterClient(Router):
         _request = _service_request("abstraction.router/router@1", "Offer", _arguments)
         _payload = _service_response(self._transport.exchange_frame(_request), "abstraction.router/router@1", "Offer")
         _result = _service_decode(_read_oa_router_offer_result, _payload, 1)
+        return _result.value
+
+    def observe_offer(self, request: OfferRequest, cursor: str, wait_ms: int) -> OfferObservation:
+        _service_check("OfferRequest", request)
+        _service_check("string", cursor)
+        _service_check("i64", wait_ms)
+        _args = _RouterObserveOfferArguments()
+        _args.request = request
+        _args.cursor = cursor
+        _args.wait_ms = wait_ms
+        _arguments = _service_encode(_write_oa_router_observe_offer_arguments, _args, 1)
+        _service_decode(_read_oa_router_observe_offer_arguments, _arguments, 1)
+        _request = _service_request("abstraction.router/router@1", "ObserveOffer", _arguments)
+        _payload = _service_response(self._transport.exchange_frame(_request), "abstraction.router/router@1", "ObserveOffer")
+        _result = _service_decode(_read_oa_router_observe_offer_result, _payload, 1)
         return _result.value

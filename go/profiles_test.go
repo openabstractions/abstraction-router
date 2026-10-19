@@ -10,7 +10,28 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	rwire "github.com/openabstractions/abstraction-router/go/abstraction/router"
 )
+
+func TestSeedCatalogueAndDefaultCapabilities(t *testing.T) {
+	want := []string{ProfileChat, ProfileEmbed, ProfileTranscription, ProfileSpeech, ProfileImage, ProfileLive, ProfileVideo}
+	if !slices.Equal(SeedProfiles, want) || !slices.Equal(rwire.Profiles, want) {
+		t.Fatalf("catalogues disagree: Go %v, router %v", SeedProfiles, rwire.Profiles)
+	}
+	for _, h := range []*Host{{Chat: "/chat"}, NewHosted("", "", WireOpenAICompatible, "")} {
+		if got := h.HostProfiles(); !slices.Equal(got, want[:5]) {
+			t.Fatalf("ordinary default %v, want %v", got, want[:5])
+		}
+	}
+	if got := NewHosted("", "", WireOpenAIRealtime, "").HostProfiles(); !slices.Equal(got, []string{ProfileLive}) {
+		t.Fatalf("realtime default %v", got)
+	}
+	declared := &Host{Profiles: []string{ProfileVideo}}
+	if got := declared.HostProfiles(); !slices.Equal(got, []string{ProfileVideo}) {
+		t.Fatalf("explicit video %v", got)
+	}
+}
 
 // ollamaWithShow serves tags, ps and /api/show capabilities per model.
 func ollamaWithShow(t *testing.T, capabilities map[string][]string) string {

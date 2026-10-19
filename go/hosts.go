@@ -27,6 +27,10 @@ import (
 // the provider's listing, read with that credential; none is ever resident.
 type Host struct {
 	Name string
+	// Engines and EngineObjects are facts supplied by this exact provider
+	// registration owner. They never establish general engine acceptance.
+	Engines       []Engine
+	EngineObjects []ModelObject
 	// BindingID is the service-owned registration identity. It remains stable
 	// across restart and changes when the declaration is replaced. Product
 	// configurations without registration still bind their endpoint and wire.
@@ -59,6 +63,12 @@ type Host struct {
 	Preloads bool
 	// Domain names the remote runtime an oa-remote@1 host is (remote.go).
 	Domain string
+	// Unavailable, when set, is read at each survey and route: a non-empty
+	// reason word says the host cannot serve now, such as a provider that
+	// stopped after failed starts. Its models stay listed as not servable
+	// with that reason, and no route goes to it, so another host serving
+	// the family takes the request.
+	Unavailable func() string
 	// windowAtLoad is true for a server that fixes its request window when a
 	// model loads (Lemonade's ctx_size). Its model maximum is no substitute
 	// for that window: an alias without a valid effective length makes its
@@ -66,6 +76,7 @@ type Host struct {
 	windowAtLoad bool
 	remote       *remoteLink
 	native       *nativeLink
+	surveyReady  func() bool
 	installed    func(context.Context, *Host) ([]string, error)
 	resident     func(context.Context, *Host) ([]string, error)
 	listing      func(ctx context.Context, h *Host, headers map[string]string) ([]string, error)
@@ -78,11 +89,12 @@ type Host struct {
 	// modelMetadata reads related per-model facts in one host-owned query.
 	// Use this when separate projections would repeat or disagree on one probe.
 	modelMetadata func(ctx context.Context, h *Host, names []string) map[string]hostModelMetadata
-	// unload is the host's own mechanism for letting go of what it holds
-	// (unload.go); nil when it has none. The router never calls it: a route,
-	// an inventory read and a residency read all leave the host's weights
-	// where they are, and only a lease asked back reaches this field.
-	unload func(ctx context.Context, h *Host) error
+	// capabilities and reasoning are what the host's owner declares for
+	// each model (DeclareModel); modelCapabilities reads facts its owner
+	// reports at survey time (ReportCapabilities). Nil states none.
+	capabilities      map[string]*ModelCapabilities
+	reasoning         map[string]ReasoningControl
+	modelCapabilities func(ctx context.Context, h *Host, names []string) map[string]*ModelCapabilities
 }
 
 // hostModelMetadata is one consistent host observation for a model.
@@ -100,13 +112,12 @@ type modelContext struct {
 
 func (h *Host) Servable() bool { return h.Chat != "" }
 
-// Endpoint is the address a caller may send to. A hosted host has none: the
-// service performs hosted calls, and no endpoint or key reaches the caller.
-func (h *Host) Endpoint() string {
-	if h.Chat == "" || h.Hosted || h.native != nil {
+// UnavailableReason is the host's Unavailable reason word, or "".
+func (h *Host) UnavailableReason() string {
+	if h == nil || h.Unavailable == nil {
 		return ""
 	}
-	return h.Base + h.Chat
+	return h.Unavailable()
 }
 
 // ChatURL is the chat address the service itself sends to, for either class.
@@ -207,6 +218,15 @@ func (h *Host) ImageURL() string {
 
 var client = &http.Client{Timeout: 2 * time.Second}
 
+type surveyHTTPClientKey struct{}
+
+func localReadClient(ctx context.Context) *http.Client {
+	if supplied, ok := ctx.Value(surveyHTTPClientKey{}).(*http.Client); ok && supplied != nil {
+		return supplied
+	}
+	return client
+}
+
 func fetch(url string, into any) error { return fetchContext(context.Background(), url, into) }
 
 func fetchContext(ctx context.Context, url string, into any) error {
@@ -214,7 +234,7 @@ func fetchContext(ctx context.Context, url string, into any) error {
 	if err != nil {
 		return failedListing(AvailabilityConfiguration, err)
 	}
-	resp, err := client.Do(req)
+	resp, err := localReadClient(ctx).Do(req)
 	if err != nil {
 		return failedListing(causeOf(err), err)
 	}
@@ -458,8 +478,7 @@ func Lemonade(base string) *Host {
 				out = append(out, d.ModelLoaded)
 			}
 			return out, nil
-		},
-		unload: unloadLemonade}
+		}}
 }
 
 // positiveJSONInteger accepts only a positive integral JSON number. Invalid,
@@ -544,8 +563,7 @@ func LMStudio(base string) *Host {
 				}
 			}
 			return out, nil
-		},
-		unload: unloadLMStudio}
+		}}
 }
 
 func Ollama(base string) *Host {
@@ -567,8 +585,7 @@ func Ollama(base string) *Host {
 	return &Host{Name: "ollama", Base: base, Chat: "/v1/chat/completions",
 		installed:     func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/tags") },
 		resident:      func(ctx context.Context, h *Host) ([]string, error) { return names(ctx, h.Base+"/api/ps") },
-		modelMetadata: ollamaModelMetadata,
-		unload:        unloadOllama}
+		modelMetadata: ollamaModelMetadata}
 }
 
 // WhisperCPP is one explicitly configured whisper.cpp server. Its process
@@ -587,40 +604,102 @@ func Piper(base string) *Host {
 		resident:  func(context.Context, *Host) ([]string, error) { return []string{"piper"}, nil }}
 }
 
-// ComfyUI runs a graph, not a model, so no OpenAI-compatible endpoint can serve
-// what it holds and Chat stays empty. It is here because a quarter of this
-// machine's weights are in its tree and an inventory that omits them is wrong.
-func ComfyUI(base string) *Host {
+// NewLocal selects the protocol adapter for an admitted local engine. The
+// optional callback supplies eligible names; protocol-specific use stays here.
+func NewLocal(kind, base string, aliases func(context.Context) ([]string, error)) (*Host, error) {
+	var host *Host
+	switch kind {
+	case "lemonade":
+		host = Lemonade(base)
+	case "lmstudio":
+		host = LMStudio(base)
+	case "ollama":
+		host = Ollama(base)
+	case "docker-model-runner":
+		host = DockerModelRunner(base)
+	case "foundry-local":
+		host = FoundryLocal(base)
+	case "whispercpp":
+		host = WhisperCPP(base)
+	case "piper":
+		host = Piper(base)
+	case "comfyui":
+		host = ComfyUI(base, ComfyRecipeAliases(aliases))
+	case "swarmui":
+		host = SwarmUI(base)
+	default:
+		return nil, fmt.Errorf("inference: unknown local host kind %q", kind)
+	}
+	// A plain local declaration keeps its wire's default profile resolution.
+	// The existing recipe-alias composition retains its image profile.
+	if kind != "comfyui" || aliases == nil {
+		host.Profiles = nil
+	}
+	return host, nil
+}
+
+type comfyUIOptions struct {
+	recipeAliases func(context.Context) ([]string, error)
+}
+
+// ComfyUIOption configures the native composition of a ComfyUI host.
+type ComfyUIOption func(*comfyUIOptions)
+
+// ComfyRecipeAliases supplies already admitted, ready recipe aliases. The
+// composition callback owns recipe and component verification and is evaluated
+// on each listing with its deadline. Router retains only the returned names.
+func ComfyRecipeAliases(aliases func(context.Context) ([]string, error)) ComfyUIOption {
+	return func(o *comfyUIOptions) { o.recipeAliases = aliases }
+}
+
+// ComfyUI offers the stock checkpoint loader's names and composition-admitted
+// recipe aliases for images. Component files remain with held-asset inventory.
+// A checkpoint listing establishes the loader namespace, not byte completeness.
+func ComfyUI(base string, options ...ComfyUIOption) *Host {
+	var config comfyUIOptions
+	for _, option := range options {
+		if option != nil {
+			option(&config)
+		}
+	}
 	return &Host{Name: "comfyui", Base: strings.TrimRight(base, "/"), Chat: "/prompt", Profiles: []string{ProfileImage},
 		installed: func(ctx context.Context, h *Host) ([]string, error) {
 			var folders []string
 			if err := fetchContext(ctx, h.Base+"/models", &folders); err != nil {
 				return nil, err
 			}
-			var mu sync.Mutex
-			var wg sync.WaitGroup
 			var out []string
-			for _, f := range folders {
-				wg.Add(1)
-				go func(f string) {
-					defer wg.Done()
-					var files []string
-					if fetchContext(ctx, h.Base+"/models/"+f, &files) != nil {
-						return
-					}
-					mu.Lock()
-					defer mu.Unlock()
-					for _, name := range files {
-						out = append(out, f+"/"+name)
-					}
-				}(f)
+			if has(folders, "checkpoints") {
+				// /models/checkpoints and CheckpointLoaderSimple use the same
+				// folder-relative names, including any nested directory.
+				if err := fetchContext(ctx, h.Base+"/models/checkpoints", &out); err != nil {
+					return nil, err
+				}
 			}
-			wg.Wait()
+			if config.recipeAliases != nil {
+				aliases, err := config.recipeAliases(ctx)
+				if err != nil {
+					return nil, err
+				}
+				// Match the router's case-insensitive alias lookup while keeping
+				// the host loader's exact spelling in the returned names.
+				seen := make(map[string]bool, len(out)+len(aliases))
+				for _, name := range out {
+					seen[strings.ToLower(name)] = true
+				}
+				for _, alias := range aliases {
+					key := strings.ToLower(alias)
+					if strings.TrimSpace(alias) == "" || seen[key] {
+						return nil, fmt.Errorf("invalid or duplicate ComfyUI recipe alias")
+					}
+					seen[key] = true
+					out = append(out, alias)
+				}
+			}
 			sort.Strings(out)
 			return out, nil
 		},
-		resident: comfyResident,
-		unload:   unloadComfyUI}
+		resident: comfyResident}
 }
 
 // comfySystemStats is the shape of GET /system_stats (ComfyUI's own
@@ -642,9 +721,8 @@ type comfySystemStats struct {
 // figure a render's own weights and allocator cache show up as). Below
 // instrument.Threshold the reading is the machine's own idle baseline, the
 // same floor the instrument applies to every other process, and reporting it
-// here would make attachedHost.Holding (serve/runtime_resources.go) find
-// ComfyUI a holder worth asking every time it is merely up. At or above it,
-// resident carries one entry, named loaded since no route gives the
+// here would list ComfyUI as holding a model every time it is merely up. At
+// or above it, resident carries one entry, named loaded since no route gives the
 // checkpoint a name, with the amount /system_stats measured: the one figure
 // this host's reading actually carries, unlike LM Studio's and Ollama's own
 // resident model lists (CONTRACT.md RES-T3 is about those; this reading has
@@ -732,13 +810,8 @@ func FoundryLocal(base string) *Host {
 	return openAILocal("foundry-local", base, "/v1")
 }
 
-// Installed is the four runtimes this machine has, in the order a decision
-// prefers them.
-func Installed() []*Host {
-	return []*Host{
-		Lemonade("http://127.0.0.1:13305"),
-		LMStudio("http://127.0.0.1:1234"),
-		Ollama("http://127.0.0.1:11434"),
-		ComfyUI("http://127.0.0.1:8188"),
-	}
-}
+// Installed returns no implicit hosts. A documented default address provides
+// no evidence that its product is installed or configured on this machine.
+// Deprecated: use Declared with explicit product records, or pass explicitly
+// configured hosts to New.
+func Installed() []*Host { return nil }
